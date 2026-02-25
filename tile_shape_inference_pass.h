@@ -53,7 +53,21 @@ enum class ErrorCode {
     E002_VALIDATION_FAILED = 2,             // TileShape validation failed
     E003_INFER_FAILED = 3,                  // Cannot infer TileShape
     E004_BUFFER_CONSTRAINT_VIOLATION = 4,   // TileShape violates buffer constraints
-    E005_OPBUILDER_CREATE_FAILED = 5        // Cannot create OpBuilder
+    E005_OPBUILDER_CREATE_FAILED = 5,       // Cannot create OpBuilder
+    E006_TILESHAPE_TRANSFORM_FAILED = 6,    // TileShape transform failed (cannot convert via View/Assemble)
+    E007_MULTI_INPUT_MISMATCH = 7           // Multi-input TileShape mismatch
+};
+
+/**
+ * @brief TileShape transform type enumeration
+ *
+ * Describes how TileShape can be converted between different shapes
+ */
+enum class TileShapeTransformType {
+    NONE,       // Cannot transform
+    VIEW,       // View transform (shape changes, data unchanged)
+    ASSEMBLE,   // Assemble transform (requires data reorganization)
+    EXACT_MATCH // Exact match, no transform needed
 };
 
 // ============================================================================
@@ -109,6 +123,38 @@ public:
      * @return npucl::SUCCESS or npucl::FAILED
      */
     virtual int ValidateConstraints(ge::NodePtr node) = 0;
+
+    /**
+     * @brief Check if input TileShape can be transformed to target TileShape
+     *
+     * Checks whether transformation is possible via View or Assemble operations.
+     *
+     * @param inputShape Predecessor's output TileShape
+     * @param targetShape Current node's configured target TileShape
+     * @param transformType [out] Transform type (VIEW/ASSEMBLE/EXACT_MATCH/NONE)
+     * @return true if transformation is possible, false otherwise
+     */
+    virtual bool CanTransformTileShape(
+        const AscppTileShape& inputShape,
+        const AscppTileShape& targetShape,
+        TileShapeTransformType& transformType);
+
+    /**
+     * @brief Infer unified TileShape from multiple input TileShapes
+     *
+     * For multi-input operators, derive a consistent unified TileShape.
+     *
+     * @param node The node
+     * @param inputShapes All input TileShapes
+     * @param unifiedShape [out] Derived unified TileShape
+     * @param errorMsg [out] Error message if inference fails
+     * @return npucl::SUCCESS or npucl::FAILED
+     */
+    virtual int InferUnifiedTileShape(
+        ge::NodePtr node,
+        const std::vector<AscppTileShape>& inputShapes,
+        AscppTileShape& unifiedShape,
+        std::string& errorMsg);
 
 protected:
     /**
@@ -235,6 +281,14 @@ public:
     bool IsValidTileShape(const AscppTileShape& tileShape);
 
     /**
+     * @brief Check if operator type is a passthrough operator (Cast/TransData)
+     *
+     * @param opType Operator type name
+     * @return true if passthrough operator, false otherwise
+     */
+    bool IsPassthroughOp(const std::string& opType);
+
+    /**
      * @brief Format error message with error code
      *
      * @param code Error code
@@ -257,6 +311,20 @@ private:
      * @return npucl::SUCCESS or npucl::FAILED
      */
     int CheckInputNodesConstraint(ge::ComputeGraphPtr graph);
+
+    /**
+     * @brief Step 1.5: Preprocess passthrough operators (Cast, TransData)
+     *
+     * Handles Cast and TransData operators inserted by previous passes,
+     * setting their TileShape to match their predecessors.
+     *
+     * @param graph The compute graph
+     * @param topoNodes Nodes in topological order
+     * @return npucl::SUCCESS or npucl::FAILED
+     */
+    int PreprocessPassthroughOps(
+        ge::ComputeGraphPtr graph,
+        const std::vector<ge::NodePtr>& topoNodes);
 
     /**
      * @brief Get nodes in topological order
@@ -313,6 +381,17 @@ private:
     int GetPredecessorOutputTileShape(
         ge::NodePtr node,
         AscppTileShape& predecessorOutputShape);
+
+    /**
+     * @brief Get all predecessors' output TileShapes (for multi-input nodes)
+     *
+     * @param node The node
+     * @param predecessorShapes [out] Vector of all predecessors' output TileShapes
+     * @return npucl::SUCCESS or npucl::FAILED
+     */
+    int GetAllPredecessorOutputTileShapes(
+        ge::NodePtr node,
+        std::vector<AscppTileShape>& predecessorShapes);
 
     /**
      * @brief Convert IoTileShapePair to AscppTileShape
@@ -377,6 +456,18 @@ const std::vector<std::string> kDataRelatedOps = {
     "ReadVariableOp",
     "Assign",
     "AssignVariableOp"
+};
+
+/**
+ * @brief List of passthrough operator types that need preprocessing
+ *
+ * These operators are inserted by previous passes and need special handling:
+ * - Cast: Type conversion, shape unchanged
+ * - TransData: Data rearrangement (e.g., NC1HWC0 <-> NCHW), may change shape
+ */
+const std::vector<std::string> kPassthroughOps = {
+    "Cast",        // Type conversion, shape unchanged
+    "TransData"    // Data rearrangement, may change shape
 };
 
 // ============================================================================

@@ -306,6 +306,39 @@ public:
 
     int ValidateConstraints(ge::NodePtr node) override;
 
+    /**
+     * @brief Infer unified TileShape from multiple broadcast-compatible inputs
+     *
+     * For element-wise ops: uses broadcast rules to find compatible shape.
+     */
+    int InferUnifiedTileShape(
+        ge::NodePtr node,
+        const std::vector<AscppTileShape>& inputShapes,
+        AscppTileShape& unifiedShape,
+        std::string& errorMsg) override;
+
+    /**
+     * @brief Check if two shapes are broadcast compatible
+     *
+     * @param shape1 First shape
+     * @param shape2 Second shape
+     * @return true if shapes can be broadcast together
+     */
+    static bool CanBroadcastShapes(
+        const AscppTileShape& shape1,
+        const AscppTileShape& shape2);
+
+    /**
+     * @brief Get broadcasted shape from two shapes
+     *
+     * @param shape1 First shape
+     * @param shape2 Second shape
+     * @return Broadcasted (output) shape
+     */
+    static AscppTileShape GetBroadcastedShape(
+        const AscppTileShape& shape1,
+        const AscppTileShape& shape2);
+
 protected:
     int CalculateInputTileShape(
         ge::NodePtr node,
@@ -453,6 +486,157 @@ private:
         ge::NodePtr node,
         std::vector<int64_t>& axes,
         bool& keepDims);
+};
+
+// ============================================================================
+// CastOpBuilder - Cast operator builder (passthrough)
+// ============================================================================
+
+/**
+ * @brief OpBuilder for Cast operator
+ *
+ * Cast performs type conversion without changing shape.
+ * TileShape is directly passed through from input to output.
+ */
+class CastOpBuilder : public BaseOpBuilder {
+public:
+    ~CastOpBuilder() override = default;
+
+    int InitAndValidateTileShape(
+        ge::NodePtr node,
+        const AscppTileShape& userTileShape,
+        AscppTileShape& inputTileShape,
+        AscppTileShape& outputTileShape) override;
+
+    int InferTileShape(
+        ge::NodePtr node,
+        const AscppTileShape& predecessorOutputShape,
+        AscppTileShape& tileShape,
+        AscppTileShape& inputTileShape,
+        AscppTileShape& outputTileShape) override;
+
+    int ValidateConstraints(ge::NodePtr node) override;
+};
+
+// ============================================================================
+// TransDataOpBuilder - TransData operator builder (passthrough)
+// ============================================================================
+
+/**
+ * @brief OpBuilder for TransData operator
+ *
+ * TransData performs data rearrangement (e.g., NC1HWC0 <-> NCHW).
+ * May change shape based on src_format and dst_format.
+ */
+class TransDataOpBuilder : public BaseOpBuilder {
+public:
+    ~TransDataOpBuilder() override = default;
+
+    int InitAndValidateTileShape(
+        ge::NodePtr node,
+        const AscppTileShape& userTileShape,
+        AscppTileShape& inputTileShape,
+        AscppTileShape& outputTileShape) override;
+
+    int InferTileShape(
+        ge::NodePtr node,
+        const AscppTileShape& predecessorOutputShape,
+        AscppTileShape& tileShape,
+        AscppTileShape& inputTileShape,
+        AscppTileShape& outputTileShape) override;
+
+    int ValidateConstraints(ge::NodePtr node) override;
+
+protected:
+    int CalculateInputTileShape(
+        ge::NodePtr node,
+        const AscppTileShape& outputTileShape,
+        AscppTileShape& inputTileShape) override;
+
+    int CalculateOutputTileShape(
+        ge::NodePtr node,
+        const AscppTileShape& inputTileShape,
+        AscppTileShape& outputTileShape) override;
+
+private:
+    /**
+     * @brief Get TransData format attributes
+     *
+     * @param node The node
+     * @param srcFormat [out] Source format (e.g., "NCHW", "NC1HWC0")
+     * @param dstFormat [out] Destination format
+     * @return npucl::SUCCESS or npucl::FAILED
+     */
+    int GetTransDataFormats(
+        ge::NodePtr node,
+        std::string& srcFormat,
+        std::string& dstFormat);
+
+    /**
+     * @brief Transform TileShape based on format conversion
+     *
+     * @param srcShape Source TileShape
+     * @param srcFormat Source format
+     * @param dstFormat Destination format
+     * @param dstShape [out] Transformed TileShape
+     * @return npucl::SUCCESS or npucl::FAILED
+     */
+    int TransformTileShapeByFormat(
+        const AscppTileShape& srcShape,
+        const std::string& srcFormat,
+        const std::string& dstFormat,
+        AscppTileShape& dstShape);
+};
+
+// ============================================================================
+// ConcatOpBuilder - Concat operator builder
+// ============================================================================
+
+/**
+ * @brief OpBuilder for Concat operator
+ *
+ * Concat concatenates tensors along a specified axis.
+ * Multi-input handling: non-concat dimensions must match.
+ */
+class ConcatOpBuilder : public BaseOpBuilder {
+public:
+    ~ConcatOpBuilder() override = default;
+
+    int InitAndValidateTileShape(
+        ge::NodePtr node,
+        const AscppTileShape& userTileShape,
+        AscppTileShape& inputTileShape,
+        AscppTileShape& outputTileShape) override;
+
+    int InferTileShape(
+        ge::NodePtr node,
+        const AscppTileShape& predecessorOutputShape,
+        AscppTileShape& tileShape,
+        AscppTileShape& inputTileShape,
+        AscppTileShape& outputTileShape) override;
+
+    int ValidateConstraints(ge::NodePtr node) override;
+
+    /**
+     * @brief Infer unified TileShape from multiple inputs
+     *
+     * For Concat: non-concat dimensions must be equal,
+     * concat axis takes minimum across inputs (conservative).
+     */
+    int InferUnifiedTileShape(
+        ge::NodePtr node,
+        const std::vector<AscppTileShape>& inputShapes,
+        AscppTileShape& unifiedShape,
+        std::string& errorMsg) override;
+
+private:
+    /**
+     * @brief Get concat axis
+     *
+     * @param node The node
+     * @return Concatenation axis
+     */
+    int64_t GetConcatAxis(ge::NodePtr node);
 };
 
 // ============================================================================
