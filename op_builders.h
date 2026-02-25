@@ -25,39 +25,31 @@ class BaseOpBuilder : public OpBuilder {
 public:
     ~BaseOpBuilder() override = default;
 
-    int InitAndValidateTileShape(
-        ge::NodePtr node,
-        const AscppTileShape& userTileShape,
-        AscppTileShape& inputTileShape,
-        AscppTileShape& outputTileShape) override;
+    int InitAndValidateTileShape() override;
 
     int InferTileShape(
-        ge::NodePtr node,
         const AscppTileShape& predecessorOutputShape,
         AscppTileShape& tileShape,
         AscppTileShape& inputTileShape,
         AscppTileShape& outputTileShape) override;
 
-    int ValidateConstraints(ge::NodePtr node) override;
+    int ValidateConstraints() override;
 
 protected:
     int CalculateInputTileShape(
-        ge::NodePtr node,
         const AscppTileShape& outputTileShape,
         AscppTileShape& inputTileShape) override;
 
     int CalculateOutputTileShape(
-        ge::NodePtr node,
         const AscppTileShape& inputTileShape,
         AscppTileShape& outputTileShape) override;
 
     /**
      * @brief Get the number of dimensions for the operator
      *
-     * @param node The node
      * @return Number of dimensions (default: 4 for NCHW)
      */
-    virtual int GetNumDimensions(ge::NodePtr node);
+    virtual int GetNumDimensions();
 
     /**
      * @brief Validate TileShape dimensions
@@ -84,29 +76,22 @@ class ConvOpBuilder : public BaseOpBuilder {
 public:
     ~ConvOpBuilder() override = default;
 
-    int InitAndValidateTileShape(
-        ge::NodePtr node,
-        const AscppTileShape& userTileShape,
-        AscppTileShape& inputTileShape,
-        AscppTileShape& outputTileShape) override;
+    int InitAndValidateTileShape() override;
 
     int InferTileShape(
-        ge::NodePtr node,
         const AscppTileShape& predecessorOutputShape,
         AscppTileShape& tileShape,
         AscppTileShape& inputTileShape,
         AscppTileShape& outputTileShape) override;
 
-    int ValidateConstraints(ge::NodePtr node) override;
+    int ValidateConstraints() override;
 
 protected:
     int CalculateInputTileShape(
-        ge::NodePtr node,
         const AscppTileShape& outputTileShape,
         AscppTileShape& inputTileShape) override;
 
     int CalculateOutputTileShape(
-        ge::NodePtr node,
         const AscppTileShape& inputTileShape,
         AscppTileShape& outputTileShape) override;
 
@@ -114,7 +99,6 @@ private:
     /**
      * @brief Get convolution attributes (stride, pad, dilation, kernel)
      *
-     * @param node The node
      * @param strides [out] Stride values
      * @param pads [out] Padding values
      * @param dilations [out] Dilation values
@@ -122,7 +106,6 @@ private:
      * @return npucl::SUCCESS or npucl::FAILED
      */
     int GetConvAttributes(
-        ge::NodePtr node,
         std::vector<int64_t>& strides,
         std::vector<int64_t>& pads,
         std::vector<int64_t>& dilations,
@@ -180,29 +163,22 @@ class MatmulOpBuilder : public BaseOpBuilder {
 public:
     ~MatmulOpBuilder() override = default;
 
-    int InitAndValidateTileShape(
-        ge::NodePtr node,
-        const AscppTileShape& userTileShape,
-        AscppTileShape& inputTileShape,
-        AscppTileShape& outputTileShape) override;
+    int InitAndValidateTileShape() override;
 
     int InferTileShape(
-        ge::NodePtr node,
         const AscppTileShape& predecessorOutputShape,
         AscppTileShape& tileShape,
         AscppTileShape& inputTileShape,
         AscppTileShape& outputTileShape) override;
 
-    int ValidateConstraints(ge::NodePtr node) override;
+    int ValidateConstraints() override;
 
 protected:
     int CalculateInputTileShape(
-        ge::NodePtr node,
         const AscppTileShape& outputTileShape,
         AscppTileShape& inputTileShape) override;
 
     int CalculateOutputTileShape(
-        ge::NodePtr node,
         const AscppTileShape& inputTileShape,
         AscppTileShape& outputTileShape) override;
 
@@ -210,15 +186,11 @@ private:
     /**
      * @brief Check if matmul is transposed
      *
-     * @param node The node
      * @param transposeA [out] Whether first input is transposed
      * @param transposeB [out] Whether second input is transposed
      * @return npucl::SUCCESS or npucl::FAILED
      */
-    int GetTransposeAttrs(
-        ge::NodePtr node,
-        bool& transposeA,
-        bool& transposeB);
+    int GetTransposeAttrs(bool& transposeA, bool& transposeB);
 };
 
 // ============================================================================
@@ -232,29 +204,22 @@ class PoolOpBuilder : public BaseOpBuilder {
 public:
     ~PoolOpBuilder() override = default;
 
-    int InitAndValidateTileShape(
-        ge::NodePtr node,
-        const AscppTileShape& userTileShape,
-        AscppTileShape& inputTileShape,
-        AscppTileShape& outputTileShape) override;
+    int InitAndValidateTileShape() override;
 
     int InferTileShape(
-        ge::NodePtr node,
         const AscppTileShape& predecessorOutputShape,
         AscppTileShape& tileShape,
         AscppTileShape& inputTileShape,
         AscppTileShape& outputTileShape) override;
 
-    int ValidateConstraints(ge::NodePtr node) override;
+    int ValidateConstraints() override;
 
 protected:
     int CalculateInputTileShape(
-        ge::NodePtr node,
         const AscppTileShape& outputTileShape,
         AscppTileShape& inputTileShape) override;
 
     int CalculateOutputTileShape(
-        ge::NodePtr node,
         const AscppTileShape& inputTileShape,
         AscppTileShape& outputTileShape) override;
 
@@ -262,7 +227,6 @@ private:
     /**
      * @brief Get pooling attributes
      *
-     * @param node The node
      * @param kernelSize [out] Kernel size values
      * @param strides [out] Stride values
      * @param pads [out] Padding values
@@ -270,7 +234,6 @@ private:
      * @return npucl::SUCCESS or npucl::FAILED
      */
     int GetPoolAttributes(
-        ge::NodePtr node,
         std::vector<int64_t>& kernelSize,
         std::vector<int64_t>& strides,
         std::vector<int64_t>& pads,
@@ -291,20 +254,15 @@ class ElementwiseOpBuilder : public BaseOpBuilder {
 public:
     ~ElementwiseOpBuilder() override = default;
 
-    int InitAndValidateTileShape(
-        ge::NodePtr node,
-        const AscppTileShape& userTileShape,
-        AscppTileShape& inputTileShape,
-        AscppTileShape& outputTileShape) override;
+    int InitAndValidateTileShape() override;
 
     int InferTileShape(
-        ge::NodePtr node,
         const AscppTileShape& predecessorOutputShape,
         AscppTileShape& tileShape,
         AscppTileShape& inputTileShape,
         AscppTileShape& outputTileShape) override;
 
-    int ValidateConstraints(ge::NodePtr node) override;
+    int ValidateConstraints() override;
 
     /**
      * @brief Infer unified TileShape from multiple broadcast-compatible inputs
@@ -312,7 +270,6 @@ public:
      * For element-wise ops: uses broadcast rules to find compatible shape.
      */
     int InferUnifiedTileShape(
-        ge::NodePtr node,
         const std::vector<AscppTileShape>& inputShapes,
         AscppTileShape& unifiedShape,
         std::string& errorMsg) override;
@@ -341,12 +298,10 @@ public:
 
 protected:
     int CalculateInputTileShape(
-        ge::NodePtr node,
         const AscppTileShape& outputTileShape,
         AscppTileShape& inputTileShape) override;
 
     int CalculateOutputTileShape(
-        ge::NodePtr node,
         const AscppTileShape& inputTileShape,
         AscppTileShape& outputTileShape) override;
 };
@@ -365,30 +320,24 @@ class ReshapeOpBuilder : public BaseOpBuilder {
 public:
     ~ReshapeOpBuilder() override = default;
 
-    int InitAndValidateTileShape(
-        ge::NodePtr node,
-        const AscppTileShape& userTileShape,
-        AscppTileShape& inputTileShape,
-        AscppTileShape& outputTileShape) override;
+    int InitAndValidateTileShape() override;
 
     int InferTileShape(
-        ge::NodePtr node,
         const AscppTileShape& predecessorOutputShape,
         AscppTileShape& tileShape,
         AscppTileShape& inputTileShape,
         AscppTileShape& outputTileShape) override;
 
-    int ValidateConstraints(ge::NodePtr node) override;
+    int ValidateConstraints() override;
 
 private:
     /**
      * @brief Get target shape from reshape node
      *
-     * @param node The node
      * @param targetShape [out] Target shape values
      * @return npucl::SUCCESS or npucl::FAILED
      */
-    int GetTargetShape(ge::NodePtr node, std::vector<int64_t>& targetShape);
+    int GetTargetShape(std::vector<int64_t>& targetShape);
 };
 
 // ============================================================================
@@ -404,20 +353,15 @@ class ActivationOpBuilder : public BaseOpBuilder {
 public:
     ~ActivationOpBuilder() override = default;
 
-    int InitAndValidateTileShape(
-        ge::NodePtr node,
-        const AscppTileShape& userTileShape,
-        AscppTileShape& inputTileShape,
-        AscppTileShape& outputTileShape) override;
+    int InitAndValidateTileShape() override;
 
     int InferTileShape(
-        ge::NodePtr node,
         const AscppTileShape& predecessorOutputShape,
         AscppTileShape& tileShape,
         AscppTileShape& inputTileShape,
         AscppTileShape& outputTileShape) override;
 
-    int ValidateConstraints(ge::NodePtr node) override;
+    int ValidateConstraints() override;
 };
 
 // ============================================================================
@@ -431,20 +375,15 @@ class BatchNormOpBuilder : public BaseOpBuilder {
 public:
     ~BatchNormOpBuilder() override = default;
 
-    int InitAndValidateTileShape(
-        ge::NodePtr node,
-        const AscppTileShape& userTileShape,
-        AscppTileShape& inputTileShape,
-        AscppTileShape& outputTileShape) override;
+    int InitAndValidateTileShape() override;
 
     int InferTileShape(
-        ge::NodePtr node,
         const AscppTileShape& predecessorOutputShape,
         AscppTileShape& tileShape,
         AscppTileShape& inputTileShape,
         AscppTileShape& outputTileShape) override;
 
-    int ValidateConstraints(ge::NodePtr node) override;
+    int ValidateConstraints() override;
 };
 
 // ============================================================================
@@ -458,34 +397,25 @@ class ReduceOpBuilder : public BaseOpBuilder {
 public:
     ~ReduceOpBuilder() override = default;
 
-    int InitAndValidateTileShape(
-        ge::NodePtr node,
-        const AscppTileShape& userTileShape,
-        AscppTileShape& inputTileShape,
-        AscppTileShape& outputTileShape) override;
+    int InitAndValidateTileShape() override;
 
     int InferTileShape(
-        ge::NodePtr node,
         const AscppTileShape& predecessorOutputShape,
         AscppTileShape& tileShape,
         AscppTileShape& inputTileShape,
         AscppTileShape& outputTileShape) override;
 
-    int ValidateConstraints(ge::NodePtr node) override;
+    int ValidateConstraints() override;
 
 private:
     /**
      * @brief Get reduce axes
      *
-     * @param node The node
      * @param axes [out] Axes to reduce
      * @param keepDims [out] Whether to keep dimensions
      * @return npucl::SUCCESS or npucl::FAILED
      */
-    int GetReduceAttributes(
-        ge::NodePtr node,
-        std::vector<int64_t>& axes,
-        bool& keepDims);
+    int GetReduceAttributes(std::vector<int64_t>& axes, bool& keepDims);
 };
 
 // ============================================================================
@@ -502,20 +432,15 @@ class CastOpBuilder : public BaseOpBuilder {
 public:
     ~CastOpBuilder() override = default;
 
-    int InitAndValidateTileShape(
-        ge::NodePtr node,
-        const AscppTileShape& userTileShape,
-        AscppTileShape& inputTileShape,
-        AscppTileShape& outputTileShape) override;
+    int InitAndValidateTileShape() override;
 
     int InferTileShape(
-        ge::NodePtr node,
         const AscppTileShape& predecessorOutputShape,
         AscppTileShape& tileShape,
         AscppTileShape& inputTileShape,
         AscppTileShape& outputTileShape) override;
 
-    int ValidateConstraints(ge::NodePtr node) override;
+    int ValidateConstraints() override;
 };
 
 // ============================================================================
@@ -532,29 +457,22 @@ class TransDataOpBuilder : public BaseOpBuilder {
 public:
     ~TransDataOpBuilder() override = default;
 
-    int InitAndValidateTileShape(
-        ge::NodePtr node,
-        const AscppTileShape& userTileShape,
-        AscppTileShape& inputTileShape,
-        AscppTileShape& outputTileShape) override;
+    int InitAndValidateTileShape() override;
 
     int InferTileShape(
-        ge::NodePtr node,
         const AscppTileShape& predecessorOutputShape,
         AscppTileShape& tileShape,
         AscppTileShape& inputTileShape,
         AscppTileShape& outputTileShape) override;
 
-    int ValidateConstraints(ge::NodePtr node) override;
+    int ValidateConstraints() override;
 
 protected:
     int CalculateInputTileShape(
-        ge::NodePtr node,
         const AscppTileShape& outputTileShape,
         AscppTileShape& inputTileShape) override;
 
     int CalculateOutputTileShape(
-        ge::NodePtr node,
         const AscppTileShape& inputTileShape,
         AscppTileShape& outputTileShape) override;
 
@@ -562,15 +480,11 @@ private:
     /**
      * @brief Get TransData format attributes
      *
-     * @param node The node
      * @param srcFormat [out] Source format (e.g., "NCHW", "NC1HWC0")
      * @param dstFormat [out] Destination format
      * @return npucl::SUCCESS or npucl::FAILED
      */
-    int GetTransDataFormats(
-        ge::NodePtr node,
-        std::string& srcFormat,
-        std::string& dstFormat);
+    int GetTransDataFormats(std::string& srcFormat, std::string& dstFormat);
 
     /**
      * @brief Transform TileShape based on format conversion
@@ -602,20 +516,15 @@ class ConcatOpBuilder : public BaseOpBuilder {
 public:
     ~ConcatOpBuilder() override = default;
 
-    int InitAndValidateTileShape(
-        ge::NodePtr node,
-        const AscppTileShape& userTileShape,
-        AscppTileShape& inputTileShape,
-        AscppTileShape& outputTileShape) override;
+    int InitAndValidateTileShape() override;
 
     int InferTileShape(
-        ge::NodePtr node,
         const AscppTileShape& predecessorOutputShape,
         AscppTileShape& tileShape,
         AscppTileShape& inputTileShape,
         AscppTileShape& outputTileShape) override;
 
-    int ValidateConstraints(ge::NodePtr node) override;
+    int ValidateConstraints() override;
 
     /**
      * @brief Infer unified TileShape from multiple inputs
@@ -624,7 +533,6 @@ public:
      * concat axis takes minimum across inputs (conservative).
      */
     int InferUnifiedTileShape(
-        ge::NodePtr node,
         const std::vector<AscppTileShape>& inputShapes,
         AscppTileShape& unifiedShape,
         std::string& errorMsg) override;
@@ -633,10 +541,9 @@ private:
     /**
      * @brief Get concat axis
      *
-     * @param node The node
      * @return Concatenation axis
      */
-    int64_t GetConcatAxis(ge::NodePtr node);
+    int64_t GetConcatAxis();
 };
 
 // ============================================================================

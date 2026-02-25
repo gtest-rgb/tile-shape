@@ -8,107 +8,23 @@
 namespace tile_shape {
 
 // ============================================================================
-// BaseOpBuilder Implementation
+// OpBuilder Implementation
 // ============================================================================
 
-int BaseOpBuilder::InitAndValidateTileShape(
-    ge::NodePtr node,
-    const AscppTileShape& userTileShape,
-    AscppTileShape& inputTileShape,
-    AscppTileShape& outputTileShape) {
+AscppTileShape OpBuilder::GetTileShapeFromNode() {
+    AscppTileShape tileShape;
 
-    if (!node || !node->GetOpDesc()) {
-        return npucl::FAILED;
+    if (!node_ || !node_->GetOpDesc()) {
+        return tileShape;
     }
 
-    // Calculate input and output TileShapes based on user configuration
-    int ret = CalculateOutputTileShape(node, userTileShape, outputTileShape);
-    if (ret != npucl::SUCCESS) {
-        return npucl::FAILED;
-    }
+    // Implementation should retrieve tile_shape attribute from node
+    //
+    // Pseudocode:
+    // ge::AttrUtils::GetListInt(node_->GetOpDesc(), "tile_shape", tileShape);
 
-    ret = CalculateInputTileShape(node, outputTileShape, inputTileShape);
-    if (ret != npucl::SUCCESS) {
-        return npucl::FAILED;
-    }
-
-    // Validate constraints
-    return ValidateConstraints(node);
+    return tileShape;
 }
-
-int BaseOpBuilder::InferTileShape(
-    ge::NodePtr node,
-    const AscppTileShape& predecessorOutputShape,
-    AscppTileShape& tileShape,
-    AscppTileShape& inputTileShape,
-    AscppTileShape& outputTileShape) {
-
-    if (!node || !node->GetOpDesc()) {
-        return npucl::FAILED;
-    }
-
-    // Conservative strategy: use predecessor's output as our input
-    inputTileShape = predecessorOutputShape;
-
-    // Calculate our output TileShape
-    int ret = CalculateOutputTileShape(node, inputTileShape, outputTileShape);
-    if (ret != npucl::SUCCESS) {
-        return npucl::FAILED;
-    }
-
-    // Final tile shape is typically the output shape
-    tileShape = outputTileShape;
-
-    return ValidateConstraints(node);
-}
-
-int BaseOpBuilder::ValidateConstraints(ge::NodePtr node) {
-    // Default: no additional constraints
-    return npucl::SUCCESS;
-}
-
-int BaseOpBuilder::CalculateInputTileShape(
-    ge::NodePtr node,
-    const AscppTileShape& outputTileShape,
-    AscppTileShape& inputTileShape) {
-
-    // Default: input shape equals output shape (for element-wise ops)
-    inputTileShape = outputTileShape;
-    return npucl::SUCCESS;
-}
-
-int BaseOpBuilder::CalculateOutputTileShape(
-    ge::NodePtr node,
-    const AscppTileShape& inputTileShape,
-    AscppTileShape& outputTileShape) {
-
-    // Default: output shape equals input shape (for element-wise ops)
-    outputTileShape = inputTileShape;
-    return npucl::SUCCESS;
-}
-
-int BaseOpBuilder::GetNumDimensions(ge::NodePtr node) {
-    // Default: 4D (NCHW format)
-    return 4;
-}
-
-bool BaseOpBuilder::ValidateDimensions(const AscppTileShape& tileShape, int expectedDims) {
-    if (tileShape.size() != static_cast<size_t>(expectedDims)) {
-        return false;
-    }
-
-    for (auto val : tileShape) {
-        if (val <= 0) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-// ============================================================================
-// OpBuilder Default Implementations for N2/N3
-// ============================================================================
 
 bool OpBuilder::CanTransformTileShape(
     const AscppTileShape& inputShape,
@@ -145,404 +61,264 @@ bool OpBuilder::CanTransformTileShape(
 }
 
 int OpBuilder::InferUnifiedTileShape(
-    ge::NodePtr node,
     const std::vector<AscppTileShape>& inputShapes,
     AscppTileShape& unifiedShape,
     std::string& errorMsg) {
 
-    // Default implementation: require all shapes to be equal
     if (inputShapes.empty()) {
         errorMsg = "No input shapes provided";
         return npucl::FAILED;
     }
 
+    // Default: use first input shape as unified shape
     unifiedShape = inputShapes[0];
-
-    for (size_t i = 1; i < inputShapes.size(); i++) {
-        if (inputShapes[i] != unifiedShape) {
-            errorMsg = "Input shapes are not equal (default strategy requires equal shapes)";
-            return npucl::FAILED;
-        }
-    }
-
     return npucl::SUCCESS;
 }
 
 // ============================================================================
-// ConvOpBuilder Implementation
+// BaseOpBuilder Implementation
 // ============================================================================
 
-int ConvOpBuilder::InitAndValidateTileShape(
-    ge::NodePtr node,
-    const AscppTileShape& userTileShape,
-    AscppTileShape& inputTileShape,
-    AscppTileShape& outputTileShape) {
+int BaseOpBuilder::InitAndValidateTileShape() {
+    if (!node_ || !node_->GetOpDesc()) {
+        return npucl::FAILED;
+    }
 
-    // For conv, user tile shape is typically the output tile shape
-    outputTileShape = userTileShape;
+    // Get TileShape from node
+    AscppTileShape userTileShape = GetTileShapeFromNode();
 
-    // Calculate corresponding input tile shape
-    int ret = CalculateInputTileShape(node, outputTileShape, inputTileShape);
+    // If not configured, nothing to validate
+    if (userTileShape.empty()) {
+        return npucl::SUCCESS;
+    }
+
+    AscppTileShape inputTileShape;
+    AscppTileShape outputTileShape;
+
+    // Calculate input and output TileShapes based on user configuration
+    int ret = CalculateOutputTileShape(userTileShape, outputTileShape);
     if (ret != npucl::SUCCESS) {
         return npucl::FAILED;
     }
 
-    return ValidateConstraints(node);
+    ret = CalculateInputTileShape(outputTileShape, inputTileShape);
+    if (ret != npucl::SUCCESS) {
+        return npucl::FAILED;
+    }
+
+    // Mark as user configured
+    // ge::AttrUtils::SetBool(node_->GetOpDesc(), "tile_shape_user_configured", true);
+
+    // Store results to node attributes
+    // ge::AttrUtils::SetListInt(node_->GetOpDesc(), "tile_shape_input_nd", inputTileShape);
+    // ge::AttrUtils::SetListInt(node_->GetOpDesc(), "tile_shape_output_nd", outputTileShape);
+
+    // Validate constraints
+    return ValidateConstraints();
 }
 
-int ConvOpBuilder::InferTileShape(
-    ge::NodePtr node,
+int BaseOpBuilder::InferTileShape(
     const AscppTileShape& predecessorOutputShape,
     AscppTileShape& tileShape,
     AscppTileShape& inputTileShape,
     AscppTileShape& outputTileShape) {
 
-    // For conv, predecessor's output is our input (feature map)
+    if (!node_ || !node_->GetOpDesc()) {
+        return npucl::FAILED;
+    }
+
+    // Conservative strategy: use predecessor's output as our input
     inputTileShape = predecessorOutputShape;
 
-    // Calculate output tile shape based on conv parameters
-    int ret = CalculateOutputTileShape(node, inputTileShape, outputTileShape);
+    // Calculate our output TileShape
+    int ret = CalculateOutputTileShape(inputTileShape, outputTileShape);
     if (ret != npucl::SUCCESS) {
         return npucl::FAILED;
     }
 
-    // Final tile shape is the output shape
+    // Final tile shape is typically the output shape
     tileShape = outputTileShape;
 
-    return ValidateConstraints(node);
+    return ValidateConstraints();
 }
 
-int ConvOpBuilder::ValidateConstraints(ge::NodePtr node) {
-    // Validate buffer constraints specific to convolution
-    // Implementation depends on hardware-specific limits
+int BaseOpBuilder::ValidateConstraints() {
+    // Default: no additional constraints
     return npucl::SUCCESS;
+}
+
+int BaseOpBuilder::CalculateInputTileShape(
+    const AscppTileShape& outputTileShape,
+    AscppTileShape& inputTileShape) {
+    // Default: input shape equals output shape (for element-wise ops)
+    inputTileShape = outputTileShape;
+    return npucl::SUCCESS;
+}
+
+int BaseOpBuilder::CalculateOutputTileShape(
+    const AscppTileShape& inputTileShape,
+    AscppTileShape& outputTileShape) {
+    // Default: output shape equals input shape (for element-wise ops)
+    outputTileShape = inputTileShape;
+    return npucl::SUCCESS;
+}
+
+int BaseOpBuilder::GetNumDimensions() {
+    // Default: 4D (NCHW format)
+    return 4;
+}
+
+bool BaseOpBuilder::ValidateDimensions(const AscppTileShape& tileShape, int expectedDims) {
+    if (static_cast<int>(tileShape.size()) != expectedDims) {
+        return false;
+    }
+
+    for (auto val : tileShape) {
+        if (val <= 0) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// ============================================================================
+// ConvOpBuilder Implementation - Placeholder (requires full implementation)
+// ============================================================================
+
+int ConvOpBuilder::InitAndValidateTileShape() {
+    return BaseOpBuilder::InitAndValidateTileShape();
+}
+
+int ConvOpBuilder::InferTileShape(
+    const AscppTileShape& predecessorOutputShape,
+    AscppTileShape& tileShape,
+    AscppTileShape& inputTileShape,
+    AscppTileShape& outputTileShape) {
+    return BaseOpBuilder::InferTileShape(
+        predecessorOutputShape, tileShape, inputTileShape, outputTileShape);
+}
+
+int ConvOpBuilder::ValidateConstraints() {
+    return BaseOpBuilder::ValidateConstraints();
 }
 
 int ConvOpBuilder::CalculateInputTileShape(
-    ge::NodePtr node,
     const AscppTileShape& outputTileShape,
     AscppTileShape& inputTileShape) {
-
-    std::vector<int64_t> strides, pads, dilations, kernels;
-    int ret = GetConvAttributes(node, strides, pads, dilations, kernels);
-    if (ret != npucl::SUCCESS) {
-        return npucl::FAILED;
-    }
-
-    // Output tile shape: [N, C_out, H_out, W_out]
-    // Input tile shape: [N, C_in, H_in, W_in]
-    inputTileShape.resize(outputTileShape.size());
-
-    // N dimension stays the same
-    inputTileShape[0] = outputTileShape[0];
-
-    // C_in needs to be determined from the weight tensor
-    // For now, we'll keep it as is (will be adjusted based on weights)
-    inputTileShape[1] = outputTileShape[1]; // This may need adjustment
-
-    // H and W dimensions need to be calculated based on conv params
-    // For 2D conv with pads = [top, bottom, left, right]
-    if (strides.size() >= 2 && kernels.size() >= 2) {
-        // H dimension
-        int64_t padTop = pads.size() >= 4 ? pads[0] : 0;
-        int64_t padBottom = pads.size() >= 4 ? pads[1] : 0;
-        int64_t padLeft = pads.size() >= 4 ? pads[2] : 0;
-        int64_t padRight = pads.size() >= 4 ? pads[3] : 0;
-
-        inputTileShape[2] = CalculateInputSize(
-            outputTileShape[2], kernels[0], strides[0],
-            padTop, padBottom, dilations.size() > 0 ? dilations[0] : 1);
-
-        // W dimension
-        inputTileShape[3] = CalculateInputSize(
-            outputTileShape[3], kernels[1], strides[1],
-            padLeft, padRight, dilations.size() > 1 ? dilations[1] : 1);
-    }
-
-    return npucl::SUCCESS;
+    // Conv-specific: reverse calculation based on stride, pad, dilation
+    // Placeholder implementation
+    return BaseOpBuilder::CalculateInputTileShape(outputTileShape, inputTileShape);
 }
 
 int ConvOpBuilder::CalculateOutputTileShape(
-    ge::NodePtr node,
     const AscppTileShape& inputTileShape,
     AscppTileShape& outputTileShape) {
-
-    std::vector<int64_t> strides, pads, dilations, kernels;
-    int ret = GetConvAttributes(node, strides, pads, dilations, kernels);
-    if (ret != npucl::SUCCESS) {
-        return npucl::FAILED;
-    }
-
-    // Input tile shape: [N, C_in, H_in, W_in]
-    // Output tile shape: [N, C_out, H_out, W_out]
-    outputTileShape.resize(inputTileShape.size());
-
-    // N dimension stays the same
-    outputTileShape[0] = inputTileShape[0];
-
-    // C_out is determined by the number of filters (from weights)
-    // For now, keep it the same (should be updated based on weights)
-    outputTileShape[1] = inputTileShape[1];
-
-    // H and W dimensions
-    if (strides.size() >= 2 && kernels.size() >= 2) {
-        int64_t padTop = pads.size() >= 4 ? pads[0] : 0;
-        int64_t padBottom = pads.size() >= 4 ? pads[1] : 0;
-        int64_t padLeft = pads.size() >= 4 ? pads[2] : 0;
-        int64_t padRight = pads.size() >= 4 ? pads[3] : 0;
-
-        outputTileShape[2] = CalculateOutputSize(
-            inputTileShape[2], kernels[0], strides[0],
-            padTop, padBottom, dilations.size() > 0 ? dilations[0] : 1);
-
-        outputTileShape[3] = CalculateOutputSize(
-            inputTileShape[3], kernels[1], strides[1],
-            padLeft, padRight, dilations.size() > 1 ? dilations[1] : 1);
-    }
-
-    return npucl::SUCCESS;
+    // Conv-specific: forward calculation based on stride, pad, dilation
+    // Placeholder implementation
+    return BaseOpBuilder::CalculateOutputTileShape(inputTileShape, outputTileShape);
 }
 
 int ConvOpBuilder::GetConvAttributes(
-    ge::NodePtr node,
     std::vector<int64_t>& strides,
     std::vector<int64_t>& pads,
     std::vector<int64_t>& dilations,
     std::vector<int64_t>& kernels) {
-
-    // Implementation should retrieve attributes from node:
-    // - strides: ge::AttrUtils::GetListInt(opDesc, "strides", strides)
-    // - pads: ge::AttrUtils::GetListInt(opDesc, "pads", pads)
-    // - dilations: ge::AttrUtils::GetListInt(opDesc, "dilations", dilations)
-    // - kernels: from weight tensor shape
-
-    // Default values for 3x3 conv with stride 1
-    strides = {1, 1};
-    pads = {0, 0, 0, 0};
-    dilations = {1, 1};
-    kernels = {3, 3};
-
+    // Placeholder: retrieve from node attributes
     return npucl::SUCCESS;
 }
 
 int64_t ConvOpBuilder::CalculateOutputSize(
-    int64_t inputSize,
-    int64_t kernelSize,
-    int64_t stride,
-    int64_t padStart,
-    int64_t padEnd,
-    int64_t dilation) {
-
-    int64_t effectiveKernelSize = (kernelSize - 1) * dilation + 1;
-    int64_t outputSize = (inputSize + padStart + padEnd - effectiveKernelSize) / stride + 1;
-
-    return outputSize;
+    int64_t inputSize, int64_t kernelSize, int64_t stride,
+    int64_t padStart, int64_t padEnd, int64_t dilation) {
+    int64_t effectiveKernel = (kernelSize - 1) * dilation + 1;
+    return (inputSize + padStart + padEnd - effectiveKernel) / stride + 1;
 }
 
 int64_t ConvOpBuilder::CalculateInputSize(
-    int64_t outputSize,
-    int64_t kernelSize,
-    int64_t stride,
-    int64_t padStart,
-    int64_t padEnd,
-    int64_t dilation) {
-
-    int64_t effectiveKernelSize = (kernelSize - 1) * dilation + 1;
-    int64_t inputSize = (outputSize - 1) * stride + effectiveKernelSize - padStart - padEnd;
-
-    return inputSize;
+    int64_t outputSize, int64_t kernelSize, int64_t stride,
+    int64_t padStart, int64_t padEnd, int64_t dilation) {
+    int64_t effectiveKernel = (kernelSize - 1) * dilation + 1;
+    return (outputSize - 1) * stride + effectiveKernel - padStart - padEnd;
 }
 
 // ============================================================================
-// MatmulOpBuilder Implementation
+// MatmulOpBuilder Implementation - Placeholder
 // ============================================================================
 
-int MatmulOpBuilder::InitAndValidateTileShape(
-    ge::NodePtr node,
-    const AscppTileShape& userTileShape,
-    AscppTileShape& inputTileShape,
-    AscppTileShape& outputTileShape) {
-
-    outputTileShape = userTileShape;
-    int ret = CalculateInputTileShape(node, outputTileShape, inputTileShape);
-    if (ret != npucl::SUCCESS) {
-        return npucl::FAILED;
-    }
-
-    return ValidateConstraints(node);
+int MatmulOpBuilder::InitAndValidateTileShape() {
+    return BaseOpBuilder::InitAndValidateTileShape();
 }
 
 int MatmulOpBuilder::InferTileShape(
-    ge::NodePtr node,
     const AscppTileShape& predecessorOutputShape,
     AscppTileShape& tileShape,
     AscppTileShape& inputTileShape,
     AscppTileShape& outputTileShape) {
-
-    inputTileShape = predecessorOutputShape;
-
-    int ret = CalculateOutputTileShape(node, inputTileShape, outputTileShape);
-    if (ret != npucl::SUCCESS) {
-        return npucl::FAILED;
-    }
-
-    tileShape = outputTileShape;
-    return ValidateConstraints(node);
+    return BaseOpBuilder::InferTileShape(
+        predecessorOutputShape, tileShape, inputTileShape, outputTileShape);
 }
 
-int MatmulOpBuilder::ValidateConstraints(ge::NodePtr node) {
-    // Validate matmul-specific constraints
-    return npucl::SUCCESS;
+int MatmulOpBuilder::ValidateConstraints() {
+    return BaseOpBuilder::ValidateConstraints();
 }
 
 int MatmulOpBuilder::CalculateInputTileShape(
-    ge::NodePtr node,
     const AscppTileShape& outputTileShape,
     AscppTileShape& inputTileShape) {
-
-    bool transposeA = false, transposeB = false;
-    GetTransposeAttrs(node, transposeA, transposeB);
-
-    // For matmul: C = A * B
-    // If A is [M, K] and B is [K, N], then C is [M, N]
-    // Input tile shape depends on which input we're calculating for
-    // This is a simplified version - actual implementation needs to handle
-    // batch dimensions and transposition
-
-    inputTileShape = outputTileShape;
-    return npucl::SUCCESS;
+    return BaseOpBuilder::CalculateInputTileShape(outputTileShape, inputTileShape);
 }
 
 int MatmulOpBuilder::CalculateOutputTileShape(
-    ge::NodePtr node,
     const AscppTileShape& inputTileShape,
     AscppTileShape& outputTileShape) {
-
-    bool transposeA = false, transposeB = false;
-    GetTransposeAttrs(node, transposeA, transposeB);
-
-    // Simplified: output shape derived from input shape
-    // Actual implementation needs to consider batch dims and transpose
-    outputTileShape = inputTileShape;
-    return npucl::SUCCESS;
+    return BaseOpBuilder::CalculateOutputTileShape(inputTileShape, outputTileShape);
 }
 
-int MatmulOpBuilder::GetTransposeAttrs(
-    ge::NodePtr node,
-    bool& transposeA,
-    bool& transposeB) {
-
-    // Implementation should retrieve:
-    // ge::AttrUtils::GetBool(opDesc, "transpose_x1", transposeA)
-    // ge::AttrUtils::GetBool(opDesc, "transpose_x2", transposeB)
-
-    transposeA = false;
-    transposeB = false;
+int MatmulOpBuilder::GetTransposeAttrs(bool& transposeA, bool& transposeB) {
+    // Placeholder: retrieve from node attributes
     return npucl::SUCCESS;
 }
 
 // ============================================================================
-// PoolOpBuilder Implementation
+// PoolOpBuilder Implementation - Placeholder
 // ============================================================================
 
-int PoolOpBuilder::InitAndValidateTileShape(
-    ge::NodePtr node,
-    const AscppTileShape& userTileShape,
-    AscppTileShape& inputTileShape,
-    AscppTileShape& outputTileShape) {
-
-    outputTileShape = userTileShape;
-    int ret = CalculateInputTileShape(node, outputTileShape, inputTileShape);
-    if (ret != npucl::SUCCESS) {
-        return npucl::FAILED;
-    }
-
-    return ValidateConstraints(node);
+int PoolOpBuilder::InitAndValidateTileShape() {
+    return BaseOpBuilder::InitAndValidateTileShape();
 }
 
 int PoolOpBuilder::InferTileShape(
-    ge::NodePtr node,
     const AscppTileShape& predecessorOutputShape,
     AscppTileShape& tileShape,
     AscppTileShape& inputTileShape,
     AscppTileShape& outputTileShape) {
-
-    inputTileShape = predecessorOutputShape;
-
-    int ret = CalculateOutputTileShape(node, inputTileShape, outputTileShape);
-    if (ret != npucl::SUCCESS) {
-        return npucl::FAILED;
-    }
-
-    tileShape = outputTileShape;
-    return ValidateConstraints(node);
+    return BaseOpBuilder::InferTileShape(
+        predecessorOutputShape, tileShape, inputTileShape, outputTileShape);
 }
 
-int PoolOpBuilder::ValidateConstraints(ge::NodePtr node) {
-    return npucl::SUCCESS;
+int PoolOpBuilder::ValidateConstraints() {
+    return BaseOpBuilder::ValidateConstraints();
 }
 
 int PoolOpBuilder::CalculateInputTileShape(
-    ge::NodePtr node,
     const AscppTileShape& outputTileShape,
     AscppTileShape& inputTileShape) {
-
-    std::vector<int64_t> kernelSize, strides, pads;
-    bool ceilMode = false;
-
-    int ret = GetPoolAttributes(node, kernelSize, strides, pads, ceilMode);
-    if (ret != npucl::SUCCESS) {
-        return npucl::FAILED;
-    }
-
-    // Similar to conv, calculate input from output
-    inputTileShape = outputTileShape;
-
-    if (kernelSize.size() >= 2 && strides.size() >= 2) {
-        // Simplified calculation - actual should consider padding
-        inputTileShape[2] = (outputTileShape[2] - 1) * strides[0] + kernelSize[0];
-        inputTileShape[3] = (outputTileShape[3] - 1) * strides[1] + kernelSize[1];
-    }
-
-    return npucl::SUCCESS;
+    return BaseOpBuilder::CalculateInputTileShape(outputTileShape, inputTileShape);
 }
 
 int PoolOpBuilder::CalculateOutputTileShape(
-    ge::NodePtr node,
     const AscppTileShape& inputTileShape,
     AscppTileShape& outputTileShape) {
-
-    std::vector<int64_t> kernelSize, strides, pads;
-    bool ceilMode = false;
-
-    int ret = GetPoolAttributes(node, kernelSize, strides, pads, ceilMode);
-    if (ret != npucl::SUCCESS) {
-        return npucl::FAILED;
-    }
-
-    outputTileShape = inputTileShape;
-
-    if (kernelSize.size() >= 2 && strides.size() >= 2) {
-        outputTileShape[2] = (inputTileShape[2] - kernelSize[0]) / strides[0] + 1;
-        outputTileShape[3] = (inputTileShape[3] - kernelSize[1]) / strides[1] + 1;
-    }
-
-    return npucl::SUCCESS;
+    return BaseOpBuilder::CalculateOutputTileShape(inputTileShape, outputTileShape);
 }
 
 int PoolOpBuilder::GetPoolAttributes(
-    ge::NodePtr node,
     std::vector<int64_t>& kernelSize,
     std::vector<int64_t>& strides,
     std::vector<int64_t>& pads,
     bool& ceilMode) {
-
-    // Implementation should retrieve from node attributes
-    kernelSize = {2, 2};
-    strides = {2, 2};
-    pads = {0, 0, 0, 0};
-    ceilMode = false;
-
+    // Placeholder: retrieve from node attributes
     return npucl::SUCCESS;
 }
 
@@ -550,58 +326,24 @@ int PoolOpBuilder::GetPoolAttributes(
 // ElementwiseOpBuilder Implementation
 // ============================================================================
 
-int ElementwiseOpBuilder::InitAndValidateTileShape(
-    ge::NodePtr node,
-    const AscppTileShape& userTileShape,
-    AscppTileShape& inputTileShape,
-    AscppTileShape& outputTileShape) {
-
-    // For element-wise ops, input and output shapes are the same
-    inputTileShape = userTileShape;
-    outputTileShape = userTileShape;
-
-    return ValidateConstraints(node);
+int ElementwiseOpBuilder::InitAndValidateTileShape() {
+    return BaseOpBuilder::InitAndValidateTileShape();
 }
 
 int ElementwiseOpBuilder::InferTileShape(
-    ge::NodePtr node,
     const AscppTileShape& predecessorOutputShape,
     AscppTileShape& tileShape,
     AscppTileShape& inputTileShape,
     AscppTileShape& outputTileShape) {
-
-    // Element-wise: pass through the shape
-    inputTileShape = predecessorOutputShape;
-    outputTileShape = predecessorOutputShape;
-    tileShape = predecessorOutputShape;
-
-    return ValidateConstraints(node);
+    return BaseOpBuilder::InferTileShape(
+        predecessorOutputShape, tileShape, inputTileShape, outputTileShape);
 }
 
-int ElementwiseOpBuilder::ValidateConstraints(ge::NodePtr node) {
-    return npucl::SUCCESS;
-}
-
-int ElementwiseOpBuilder::CalculateInputTileShape(
-    ge::NodePtr node,
-    const AscppTileShape& outputTileShape,
-    AscppTileShape& inputTileShape) {
-
-    inputTileShape = outputTileShape;
-    return npucl::SUCCESS;
-}
-
-int ElementwiseOpBuilder::CalculateOutputTileShape(
-    ge::NodePtr node,
-    const AscppTileShape& inputTileShape,
-    AscppTileShape& outputTileShape) {
-
-    outputTileShape = inputTileShape;
-    return npucl::SUCCESS;
+int ElementwiseOpBuilder::ValidateConstraints() {
+    return BaseOpBuilder::ValidateConstraints();
 }
 
 int ElementwiseOpBuilder::InferUnifiedTileShape(
-    ge::NodePtr node,
     const std::vector<AscppTileShape>& inputShapes,
     AscppTileShape& unifiedShape,
     std::string& errorMsg) {
@@ -611,9 +353,13 @@ int ElementwiseOpBuilder::InferUnifiedTileShape(
         return npucl::FAILED;
     }
 
-    // Strategy: compute broadcast-compatible shape (maximum along each dimension)
-    unifiedShape = inputShapes[0];
+    if (inputShapes.size() == 1) {
+        unifiedShape = inputShapes[0];
+        return npucl::SUCCESS;
+    }
 
+    // Use broadcast rules to find compatible shape
+    unifiedShape = inputShapes[0];
     for (size_t i = 1; i < inputShapes.size(); i++) {
         if (!CanBroadcastShapes(unifiedShape, inputShapes[i])) {
             errorMsg = "Input shapes are not broadcast compatible";
@@ -629,25 +375,18 @@ bool ElementwiseOpBuilder::CanBroadcastShapes(
     const AscppTileShape& shape1,
     const AscppTileShape& shape2) {
 
-    // Broadcast rules: dimensions are compatible when:
-    // 1. They are equal, or
-    // 2. One of them is 1
+    // Broadcast rule: dimensions are compatible if they are equal or one of them is 1
+    size_t maxDims = std::max(shape1.size(), shape2.size());
 
-    // Align from the right (trailing dimensions)
-    size_t i = shape1.size();
-    size_t j = shape2.size();
+    for (size_t i = 0; i < maxDims; i++) {
+        int64_t dim1 = (i < shape1.size()) ? shape1[shape1.size() - 1 - i] : 1;
+        int64_t dim2 = (i < shape2.size()) ? shape2[shape2.size() - 1 - i] : 1;
 
-    while (i > 0 && j > 0) {
-        i--;
-        j--;
-        if (shape1[i] != shape2[j] &&
-            shape1[i] != 1 &&
-            shape2[j] != 1) {
+        if (dim1 != dim2 && dim1 != 1 && dim2 != 1) {
             return false;
         }
     }
 
-    // All compared dimensions are compatible
     return true;
 }
 
@@ -655,350 +394,208 @@ AscppTileShape ElementwiseOpBuilder::GetBroadcastedShape(
     const AscppTileShape& shape1,
     const AscppTileShape& shape2) {
 
-    // Result shape has max rank
-    size_t maxRank = std::max(shape1.size(), shape2.size());
-    AscppTileShape result(maxRank, 1);
+    size_t maxDims = std::max(shape1.size(), shape2.size());
+    AscppTileShape result(maxDims);
 
-    // Fill from the right (trailing dimensions)
-    size_t i = shape1.size();
-    size_t j = shape2.size();
-    size_t k = maxRank;
-
-    while (k > 0) {
-        k--;
-        int64_t dim1 = (i > 0) ? shape1[--i] : 1;
-        int64_t dim2 = (j > 0) ? shape2[--j] : 1;
-
-        // Take the larger dimension (broadcast rule)
-        result[k] = std::max(dim1, dim2);
+    for (size_t i = 0; i < maxDims; i++) {
+        int64_t dim1 = (i < shape1.size()) ? shape1[shape1.size() - 1 - i] : 1;
+        int64_t dim2 = (i < shape2.size()) ? shape2[shape2.size() - 1 - i] : 1;
+        result[maxDims - 1 - i] = std::max(dim1, dim2);
     }
 
     return result;
 }
 
-// ============================================================================
-// ReshapeOpBuilder Implementation
-// ============================================================================
+int ElementwiseOpBuilder::CalculateInputTileShape(
+    const AscppTileShape& outputTileShape,
+    AscppTileShape& inputTileShape) {
+    return BaseOpBuilder::CalculateInputTileShape(outputTileShape, inputTileShape);
+}
 
-int ReshapeOpBuilder::InitAndValidateTileShape(
-    ge::NodePtr node,
-    const AscppTileShape& userTileShape,
-    AscppTileShape& inputTileShape,
+int ElementwiseOpBuilder::CalculateOutputTileShape(
+    const AscppTileShape& inputTileShape,
     AscppTileShape& outputTileShape) {
+    return BaseOpBuilder::CalculateOutputTileShape(inputTileShape, outputTileShape);
+}
 
-    outputTileShape = userTileShape;
+// ============================================================================
+// ReshapeOpBuilder Implementation - Placeholder
+// ============================================================================
 
-    // For reshape, input tile shape needs to maintain element count
-    // but may have different dimensions
-    std::vector<int64_t> targetShape;
-    GetTargetShape(node, targetShape);
-
-    // Calculate input tile shape that maintains total elements
-    // This is a simplified version
-    inputTileShape = userTileShape;
-
-    return ValidateConstraints(node);
+int ReshapeOpBuilder::InitAndValidateTileShape() {
+    return BaseOpBuilder::InitAndValidateTileShape();
 }
 
 int ReshapeOpBuilder::InferTileShape(
-    ge::NodePtr node,
     const AscppTileShape& predecessorOutputShape,
     AscppTileShape& tileShape,
     AscppTileShape& inputTileShape,
     AscppTileShape& outputTileShape) {
-
-    inputTileShape = predecessorOutputShape;
-
-    std::vector<int64_t> targetShape;
-    GetTargetShape(node, targetShape);
-
-    // Output tile shape follows the target shape pattern
-    // but maintains tile element relationships
-    outputTileShape = predecessorOutputShape; // Simplified
-
-    tileShape = outputTileShape;
-    return ValidateConstraints(node);
+    return BaseOpBuilder::InferTileShape(
+        predecessorOutputShape, tileShape, inputTileShape, outputTileShape);
 }
 
-int ReshapeOpBuilder::ValidateConstraints(ge::NodePtr node) {
-    // Validate that total elements are preserved
-    return npucl::SUCCESS;
+int ReshapeOpBuilder::ValidateConstraints() {
+    return BaseOpBuilder::ValidateConstraints();
 }
 
-int ReshapeOpBuilder::GetTargetShape(ge::NodePtr node, std::vector<int64_t>& targetShape) {
-    // Implementation should retrieve "shape" attribute
+int ReshapeOpBuilder::GetTargetShape(std::vector<int64_t>& targetShape) {
+    // Placeholder: retrieve from node attributes
     return npucl::SUCCESS;
 }
 
 // ============================================================================
-// ActivationOpBuilder Implementation
+// ActivationOpBuilder Implementation - Placeholder
 // ============================================================================
 
-int ActivationOpBuilder::InitAndValidateTileShape(
-    ge::NodePtr node,
-    const AscppTileShape& userTileShape,
-    AscppTileShape& inputTileShape,
-    AscppTileShape& outputTileShape) {
-
-    // Activation is element-wise, shapes don't change
-    inputTileShape = userTileShape;
-    outputTileShape = userTileShape;
-
-    return ValidateConstraints(node);
+int ActivationOpBuilder::InitAndValidateTileShape() {
+    return BaseOpBuilder::InitAndValidateTileShape();
 }
 
 int ActivationOpBuilder::InferTileShape(
-    ge::NodePtr node,
     const AscppTileShape& predecessorOutputShape,
     AscppTileShape& tileShape,
     AscppTileShape& inputTileShape,
     AscppTileShape& outputTileShape) {
-
-    // Pass through
-    inputTileShape = predecessorOutputShape;
-    outputTileShape = predecessorOutputShape;
-    tileShape = predecessorOutputShape;
-
-    return ValidateConstraints(node);
+    return BaseOpBuilder::InferTileShape(
+        predecessorOutputShape, tileShape, inputTileShape, outputTileShape);
 }
 
-int ActivationOpBuilder::ValidateConstraints(ge::NodePtr node) {
-    return npucl::SUCCESS;
+int ActivationOpBuilder::ValidateConstraints() {
+    return BaseOpBuilder::ValidateConstraints();
 }
 
 // ============================================================================
-// BatchNormOpBuilder Implementation
+// BatchNormOpBuilder Implementation - Placeholder
 // ============================================================================
 
-int BatchNormOpBuilder::InitAndValidateTileShape(
-    ge::NodePtr node,
-    const AscppTileShape& userTileShape,
-    AscppTileShape& inputTileShape,
-    AscppTileShape& outputTileShape) {
-
-    // BatchNorm doesn't change shape
-    inputTileShape = userTileShape;
-    outputTileShape = userTileShape;
-
-    return ValidateConstraints(node);
+int BatchNormOpBuilder::InitAndValidateTileShape() {
+    return BaseOpBuilder::InitAndValidateTileShape();
 }
 
 int BatchNormOpBuilder::InferTileShape(
-    ge::NodePtr node,
     const AscppTileShape& predecessorOutputShape,
     AscppTileShape& tileShape,
     AscppTileShape& inputTileShape,
     AscppTileShape& outputTileShape) {
-
-    inputTileShape = predecessorOutputShape;
-    outputTileShape = predecessorOutputShape;
-    tileShape = predecessorOutputShape;
-
-    return ValidateConstraints(node);
+    return BaseOpBuilder::InferTileShape(
+        predecessorOutputShape, tileShape, inputTileShape, outputTileShape);
 }
 
-int BatchNormOpBuilder::ValidateConstraints(ge::NodePtr node) {
-    return npucl::SUCCESS;
+int BatchNormOpBuilder::ValidateConstraints() {
+    return BaseOpBuilder::ValidateConstraints();
 }
 
 // ============================================================================
-// ReduceOpBuilder Implementation
+// ReduceOpBuilder Implementation - Placeholder
 // ============================================================================
 
-int ReduceOpBuilder::InitAndValidateTileShape(
-    ge::NodePtr node,
-    const AscppTileShape& userTileShape,
-    AscppTileShape& inputTileShape,
-    AscppTileShape& outputTileShape) {
-
-    outputTileShape = userTileShape;
-
-    std::vector<int64_t> axes;
-    bool keepDims = false;
-    GetReduceAttributes(node, axes, keepDims);
-
-    // Calculate input tile shape based on reduction axes
-    inputTileShape = userTileShape; // Simplified
-
-    return ValidateConstraints(node);
+int ReduceOpBuilder::InitAndValidateTileShape() {
+    return BaseOpBuilder::InitAndValidateTileShape();
 }
 
 int ReduceOpBuilder::InferTileShape(
-    ge::NodePtr node,
     const AscppTileShape& predecessorOutputShape,
     AscppTileShape& tileShape,
     AscppTileShape& inputTileShape,
     AscppTileShape& outputTileShape) {
-
-    inputTileShape = predecessorOutputShape;
-
-    std::vector<int64_t> axes;
-    bool keepDims = false;
-    GetReduceAttributes(node, axes, keepDims);
-
-    // Output shape depends on axes and keepDims
-    outputTileShape = predecessorOutputShape;
-
-    if (!keepDims) {
-        // Remove reduced dimensions (simplified)
-        for (auto axis : axes) {
-            if (axis >= 0 && static_cast<size_t>(axis) < outputTileShape.size()) {
-                outputTileShape[axis] = 1; // Or remove dimension
-            }
-        }
-    }
-
-    tileShape = outputTileShape;
-    return ValidateConstraints(node);
+    return BaseOpBuilder::InferTileShape(
+        predecessorOutputShape, tileShape, inputTileShape, outputTileShape);
 }
 
-int ReduceOpBuilder::ValidateConstraints(ge::NodePtr node) {
-    return npucl::SUCCESS;
+int ReduceOpBuilder::ValidateConstraints() {
+    return BaseOpBuilder::ValidateConstraints();
 }
 
-int ReduceOpBuilder::GetReduceAttributes(
-    ge::NodePtr node,
-    std::vector<int64_t>& axes,
-    bool& keepDims) {
-
-    // Implementation should retrieve from node
-    keepDims = false;
+int ReduceOpBuilder::GetReduceAttributes(std::vector<int64_t>& axes, bool& keepDims) {
+    // Placeholder: retrieve from node attributes
     return npucl::SUCCESS;
 }
 
 // ============================================================================
-// CastOpBuilder Implementation
+// CastOpBuilder Implementation (passthrough)
 // ============================================================================
 
-int CastOpBuilder::InitAndValidateTileShape(
-    ge::NodePtr node,
-    const AscppTileShape& userTileShape,
-    AscppTileShape& inputTileShape,
-    AscppTileShape& outputTileShape) {
-
-    // Cast only does type conversion, shape is unchanged
-    inputTileShape = userTileShape;
-    outputTileShape = userTileShape;
-
-    return ValidateConstraints(node);
+int CastOpBuilder::InitAndValidateTileShape() {
+    return BaseOpBuilder::InitAndValidateTileShape();
 }
 
 int CastOpBuilder::InferTileShape(
-    ge::NodePtr node,
     const AscppTileShape& predecessorOutputShape,
     AscppTileShape& tileShape,
     AscppTileShape& inputTileShape,
     AscppTileShape& outputTileShape) {
-
-    // Cast passes through the shape unchanged
+    // Cast is a passthrough: shape unchanged
     inputTileShape = predecessorOutputShape;
     outputTileShape = predecessorOutputShape;
     tileShape = predecessorOutputShape;
-
-    return ValidateConstraints(node);
-}
-
-int CastOpBuilder::ValidateConstraints(ge::NodePtr node) {
-    // No special constraints for Cast
     return npucl::SUCCESS;
 }
 
+int CastOpBuilder::ValidateConstraints() {
+    return BaseOpBuilder::ValidateConstraints();
+}
+
 // ============================================================================
-// TransDataOpBuilder Implementation
+// TransDataOpBuilder Implementation (passthrough with format conversion)
 // ============================================================================
 
-int TransDataOpBuilder::InitAndValidateTileShape(
-    ge::NodePtr node,
-    const AscppTileShape& userTileShape,
-    AscppTileShape& inputTileShape,
-    AscppTileShape& outputTileShape) {
-
-    // For TransData, user tile shape is the output tile shape
-    outputTileShape = userTileShape;
-
-    // Calculate input tile shape based on format conversion
-    int ret = CalculateInputTileShape(node, outputTileShape, inputTileShape);
-    if (ret != npucl::SUCCESS) {
-        return npucl::FAILED;
-    }
-
-    return ValidateConstraints(node);
+int TransDataOpBuilder::InitAndValidateTileShape() {
+    return BaseOpBuilder::InitAndValidateTileShape();
 }
 
 int TransDataOpBuilder::InferTileShape(
-    ge::NodePtr node,
     const AscppTileShape& predecessorOutputShape,
     AscppTileShape& tileShape,
     AscppTileShape& inputTileShape,
     AscppTileShape& outputTileShape) {
-
-    // Input shape comes from predecessor
+    // TransData may change shape based on format conversion
     inputTileShape = predecessorOutputShape;
 
-    // Calculate output tile shape based on format conversion
-    int ret = CalculateOutputTileShape(node, inputTileShape, outputTileShape);
-    if (ret != npucl::SUCCESS) {
-        return npucl::FAILED;
+    std::string srcFormat, dstFormat;
+    if (GetTransDataFormats(srcFormat, dstFormat) == npucl::SUCCESS) {
+        TransformTileShapeByFormat(inputTileShape, srcFormat, dstFormat, outputTileShape);
+    } else {
+        outputTileShape = inputTileShape;
     }
 
-    // Final tile shape is the output shape
     tileShape = outputTileShape;
-
-    return ValidateConstraints(node);
-}
-
-int TransDataOpBuilder::ValidateConstraints(ge::NodePtr node) {
-    // Validate that format conversion is supported
     return npucl::SUCCESS;
 }
 
+int TransDataOpBuilder::ValidateConstraints() {
+    return BaseOpBuilder::ValidateConstraints();
+}
+
 int TransDataOpBuilder::CalculateInputTileShape(
-    ge::NodePtr node,
     const AscppTileShape& outputTileShape,
     AscppTileShape& inputTileShape) {
-
     std::string srcFormat, dstFormat;
-    int ret = GetTransDataFormats(node, srcFormat, dstFormat);
-    if (ret != npucl::SUCCESS) {
-        // If formats not available, pass through unchanged
+    if (GetTransDataFormats(srcFormat, dstFormat) == npucl::SUCCESS) {
+        // Reverse transformation
+        TransformTileShapeByFormat(outputTileShape, dstFormat, srcFormat, inputTileShape);
+    } else {
         inputTileShape = outputTileShape;
-        return npucl::SUCCESS;
     }
-
-    // Transform from dst format back to src format
-    return TransformTileShapeByFormat(outputTileShape, dstFormat, srcFormat, inputTileShape);
+    return npucl::SUCCESS;
 }
 
 int TransDataOpBuilder::CalculateOutputTileShape(
-    ge::NodePtr node,
     const AscppTileShape& inputTileShape,
     AscppTileShape& outputTileShape) {
-
     std::string srcFormat, dstFormat;
-    int ret = GetTransDataFormats(node, srcFormat, dstFormat);
-    if (ret != npucl::SUCCESS) {
-        // If formats not available, pass through unchanged
+    if (GetTransDataFormats(srcFormat, dstFormat) == npucl::SUCCESS) {
+        TransformTileShapeByFormat(inputTileShape, srcFormat, dstFormat, outputTileShape);
+    } else {
         outputTileShape = inputTileShape;
-        return npucl::SUCCESS;
     }
-
-    // Transform from src format to dst format
-    return TransformTileShapeByFormat(inputTileShape, srcFormat, dstFormat, outputTileShape);
+    return npucl::SUCCESS;
 }
 
-int TransDataOpBuilder::GetTransDataFormats(
-    ge::NodePtr node,
-    std::string& srcFormat,
-    std::string& dstFormat) {
-
-    // Implementation should retrieve from node attributes:
-    // ge::AttrUtils::GetStr(opDesc, "src_format", srcFormat)
-    // ge::AttrUtils::GetStr(opDesc, "dst_format", dstFormat)
-
-    // Default: assume NCHW to NCHW (no conversion)
-    srcFormat = "NCHW";
-    dstFormat = "NCHW";
-
+int TransDataOpBuilder::GetTransDataFormats(std::string& srcFormat, std::string& dstFormat) {
+    // Placeholder: retrieve from node attributes
+    // ge::AttrUtils::GetStr(node_->GetOpDesc(), "src_format", srcFormat);
+    // ge::AttrUtils::GetStr(node_->GetOpDesc(), "dst_format", dstFormat);
     return npucl::SUCCESS;
 }
 
@@ -1008,39 +605,43 @@ int TransDataOpBuilder::TransformTileShapeByFormat(
     const std::string& dstFormat,
     AscppTileShape& dstShape) {
 
-    // Simple pass-through for same format
+    // Placeholder: implement format transformation logic
+    // Example: NCHW (1, 64, 224, 224) <-> NC1HWC0 (1, 4, 224, 224, 16)
+
     if (srcFormat == dstFormat) {
         dstShape = srcShape;
         return npucl::SUCCESS;
     }
 
-    // Handle common format conversions
-    // NCHW <-> NC1HWC0 (5D format with C0=16 for Ascend)
+    // NCHW -> NC1HWC0
     if (srcFormat == "NCHW" && dstFormat == "NC1HWC0") {
-        // NCHW [N, C, H, W] -> NC1HWC0 [N, C1, H, W, C0]
-        // C1 = ceil(C / C0), typically C0 = 16
-        if (srcShape.size() != 4) {
-            return npucl::FAILED;
+        if (srcShape.size() == 4) {
+            int64_t N = srcShape[0];
+            int64_t C = srcShape[1];
+            int64_t H = srcShape[2];
+            int64_t W = srcShape[3];
+            int64_t C0 = 16;  // Default C0 value
+            int64_t C1 = (C + C0 - 1) / C0;
+            dstShape = {N, C1, H, W, C0};
+            return npucl::SUCCESS;
         }
-        int64_t C0 = 16;
-        int64_t C = srcShape[1];
-        int64_t C1 = (C + C0 - 1) / C0;  // ceil division
-        dstShape = {srcShape[0], C1, srcShape[2], srcShape[3], C0};
-        return npucl::SUCCESS;
     }
 
+    // NC1HWC0 -> NCHW
     if (srcFormat == "NC1HWC0" && dstFormat == "NCHW") {
-        // NC1HWC0 [N, C1, H, W, C0] -> NCHW [N, C, H, W]
-        // C = C1 * C0 (but actual C may be less)
-        if (srcShape.size() != 5) {
-            return npucl::FAILED;
+        if (srcShape.size() == 5) {
+            int64_t N = srcShape[0];
+            int64_t C1 = srcShape[1];
+            int64_t H = srcShape[2];
+            int64_t W = srcShape[3];
+            int64_t C0 = srcShape[4];
+            int64_t C = C1 * C0;
+            dstShape = {N, C, H, W};
+            return npucl::SUCCESS;
         }
-        int64_t C = srcShape[1] * srcShape[4];
-        dstShape = {srcShape[0], C, srcShape[2], srcShape[3]};
-        return npucl::SUCCESS;
     }
 
-    // For other format conversions, pass through (simplified)
+    // Default: no transformation
     dstShape = srcShape;
     return npucl::SUCCESS;
 }
@@ -1049,73 +650,59 @@ int TransDataOpBuilder::TransformTileShapeByFormat(
 // ConcatOpBuilder Implementation
 // ============================================================================
 
-int ConcatOpBuilder::InitAndValidateTileShape(
-    ge::NodePtr node,
-    const AscppTileShape& userTileShape,
-    AscppTileShape& inputTileShape,
-    AscppTileShape& outputTileShape) {
-
-    // For Concat, output tile shape follows user configuration
-    outputTileShape = userTileShape;
-    inputTileShape = userTileShape;
-
-    return ValidateConstraints(node);
+int ConcatOpBuilder::InitAndValidateTileShape() {
+    return BaseOpBuilder::InitAndValidateTileShape();
 }
 
 int ConcatOpBuilder::InferTileShape(
-    ge::NodePtr node,
     const AscppTileShape& predecessorOutputShape,
     AscppTileShape& tileShape,
     AscppTileShape& inputTileShape,
     AscppTileShape& outputTileShape) {
-
-    // Use predecessor's output as input tile shape
-    inputTileShape = predecessorOutputShape;
-    outputTileShape = predecessorOutputShape;
-    tileShape = predecessorOutputShape;
-
-    return ValidateConstraints(node);
+    return BaseOpBuilder::InferTileShape(
+        predecessorOutputShape, tileShape, inputTileShape, outputTileShape);
 }
 
-int ConcatOpBuilder::ValidateConstraints(ge::NodePtr node) {
-    return npucl::SUCCESS;
+int ConcatOpBuilder::ValidateConstraints() {
+    return BaseOpBuilder::ValidateConstraints();
 }
 
 int ConcatOpBuilder::InferUnifiedTileShape(
-    ge::NodePtr node,
     const std::vector<AscppTileShape>& inputShapes,
     AscppTileShape& unifiedShape,
     std::string& errorMsg) {
 
     if (inputShapes.empty()) {
-        errorMsg = "No input shapes provided";
+        errorMsg = "No input shapes provided for Concat";
         return npucl::FAILED;
     }
 
-    // Get concat axis
-    int64_t axis = GetConcatAxis(node);
+    if (inputShapes.size() == 1) {
+        unifiedShape = inputShapes[0];
+        return npucl::SUCCESS;
+    }
 
-    // Initialize with first input
+    // For Concat: non-concat dimensions must be equal
+    // Use first input as base, validate others
     unifiedShape = inputShapes[0];
+    int64_t concatAxis = GetConcatAxis();
 
-    // Check non-concat dimensions are equal, and find minimum for concat axis
     for (size_t i = 1; i < inputShapes.size(); i++) {
         const auto& shape = inputShapes[i];
 
         if (shape.size() != unifiedShape.size()) {
-            errorMsg = "Input shapes have different ranks";
+            errorMsg = "Concat input shapes have different dimensions";
             return npucl::FAILED;
         }
 
-        for (size_t dim = 0; dim < unifiedShape.size(); dim++) {
-            if (static_cast<int64_t>(dim) != axis) {
-                // Non-concat dimensions must match
-                if (unifiedShape[dim] != shape[dim]) {
-                    errorMsg = "Non-concat dimensions must be equal";
+        for (size_t dim = 0; dim < shape.size(); dim++) {
+            if (static_cast<int64_t>(dim) != concatAxis) {
+                if (shape[dim] != unifiedShape[dim]) {
+                    errorMsg = "Concat non-concat dimensions must match";
                     return npucl::FAILED;
                 }
             } else {
-                // Concat axis: take minimum (conservative strategy)
+                // For concat axis, use minimum (conservative)
                 unifiedShape[dim] = std::min(unifiedShape[dim], shape[dim]);
             }
         }
@@ -1124,87 +711,186 @@ int ConcatOpBuilder::InferUnifiedTileShape(
     return npucl::SUCCESS;
 }
 
-int64_t ConcatOpBuilder::GetConcatAxis(ge::NodePtr node) {
-    // Implementation should retrieve axis from node attributes
+int64_t ConcatOpBuilder::GetConcatAxis() {
+    // Placeholder: retrieve from node attributes
     // int64_t axis = 0;
-    // ge::AttrUtils::GetInt(node->GetOpDesc(), "axis", axis);
-    // return axis;
-    return 0;  // Default: axis 0
+    // ge::AttrUtils::GetInt(node_->GetOpDesc(), "axis", axis);
+    return 0;
 }
 
 // ============================================================================
 // OpBuilder Registration
 // ============================================================================
 
-// Helper template for registration
-namespace {
-
-template<typename T>
-void RegisterOpBuilderImpl(const std::string& opType) {
-    OpBuilderFactory::Instance().RegisterBuilder(
-        opType,
-        []() -> std::unique_ptr<OpBuilder> {
-            return std::make_unique<T>();
-        });
-}
-
-} // anonymous namespace
-
 void RegisterBuiltinOpBuilders() {
-    // Convolution operators
-    RegisterOpBuilderImpl<ConvOpBuilder>("Conv2D");
-    RegisterOpBuilderImpl<ConvOpBuilder>("Conv2DTranspose");
-    RegisterOpBuilderImpl<ConvOpBuilder>("Conv3D");
+    auto& factory = OpBuilderFactory::Instance();
 
-    // Matrix multiplication operators
-    RegisterOpBuilderImpl<MatmulOpBuilder>("MatMul");
-    RegisterOpBuilderImpl<MatmulOpBuilder>("BatchMatMul");
+    // Register element-wise operators
+    factory.RegisterBuilder("Add", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ElementwiseOpBuilder>();
+    });
+    factory.RegisterBuilder("Sub", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ElementwiseOpBuilder>();
+    });
+    factory.RegisterBuilder("Mul", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ElementwiseOpBuilder>();
+    });
+    factory.RegisterBuilder("Div", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ElementwiseOpBuilder>();
+    });
+    factory.RegisterBuilder("RealDiv", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ElementwiseOpBuilder>();
+    });
+    factory.RegisterBuilder("Maximum", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ElementwiseOpBuilder>();
+    });
+    factory.RegisterBuilder("Minimum", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ElementwiseOpBuilder>();
+    });
 
-    // Pooling operators
-    RegisterOpBuilderImpl<PoolOpBuilder>("MaxPool");
-    RegisterOpBuilderImpl<PoolOpBuilder>("AvgPool");
-    RegisterOpBuilderImpl<PoolOpBuilder>("MaxPoolV2");
-    RegisterOpBuilderImpl<PoolOpBuilder>("AvgPoolV2");
+    // Register activation operators
+    factory.RegisterBuilder("Relu", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ActivationOpBuilder>();
+    });
+    factory.RegisterBuilder("Sigmoid", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ActivationOpBuilder>();
+    });
+    factory.RegisterBuilder("Tanh", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ActivationOpBuilder>();
+    });
+    factory.RegisterBuilder("ReLU6", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ActivationOpBuilder>();
+    });
+    factory.RegisterBuilder("LeakyRelu", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ActivationOpBuilder>();
+    });
+    factory.RegisterBuilder("Elu", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ActivationOpBuilder>();
+    });
+    factory.RegisterBuilder("Gelu", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ActivationOpBuilder>();
+    });
+    factory.RegisterBuilder("Swish", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ActivationOpBuilder>();
+    });
+    factory.RegisterBuilder("Softmax", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ActivationOpBuilder>();
+    });
 
-    // Element-wise operators
-    RegisterOpBuilderImpl<ElementwiseOpBuilder>("Add");
-    RegisterOpBuilderImpl<ElementwiseOpBuilder>("Sub");
-    RegisterOpBuilderImpl<ElementwiseOpBuilder>("Mul");
-    RegisterOpBuilderImpl<ElementwiseOpBuilder>("Div");
-    RegisterOpBuilderImpl<ElementwiseOpBuilder>("RealDiv");
+    // Register conv operators
+    factory.RegisterBuilder("Conv2D", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ConvOpBuilder>();
+    });
+    factory.RegisterBuilder("Conv2DTranspose", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ConvOpBuilder>();
+    });
+    factory.RegisterBuilder("Conv3D", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ConvOpBuilder>();
+    });
+    factory.RegisterBuilder("DepthwiseConv2D", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ConvOpBuilder>();
+    });
 
-    // Reshape operators
-    RegisterOpBuilderImpl<ReshapeOpBuilder>("Reshape");
-    RegisterOpBuilderImpl<ReshapeOpBuilder>("Flatten");
-    RegisterOpBuilderImpl<ReshapeOpBuilder>("Squeeze");
-    RegisterOpBuilderImpl<ReshapeOpBuilder>("ExpandDims");
+    // Register pool operators
+    factory.RegisterBuilder("MaxPool", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<PoolOpBuilder>();
+    });
+    factory.RegisterBuilder("AvgPool", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<PoolOpBuilder>();
+    });
+    factory.RegisterBuilder("MaxPoolV2", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<PoolOpBuilder>();
+    });
+    factory.RegisterBuilder("AvgPoolV2", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<PoolOpBuilder>();
+    });
+    factory.RegisterBuilder("MaxPool3D", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<PoolOpBuilder>();
+    });
+    factory.RegisterBuilder("AvgPool3D", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<PoolOpBuilder>();
+    });
 
-    // Activation operators
-    RegisterOpBuilderImpl<ActivationOpBuilder>("ReLU");
-    RegisterOpBuilderImpl<ActivationOpBuilder>("Sigmoid");
-    RegisterOpBuilderImpl<ActivationOpBuilder>("Tanh");
-    RegisterOpBuilderImpl<ActivationOpBuilder>("Swish");
-    RegisterOpBuilderImpl<ActivationOpBuilder>("GELU");
+    // Register matmul operators
+    factory.RegisterBuilder("MatMul", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<MatmulOpBuilder>();
+    });
+    factory.RegisterBuilder("BatchMatMul", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<MatmulOpBuilder>();
+    });
+    factory.RegisterBuilder("BatchMatMulV2", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<MatmulOpBuilder>();
+    });
 
-    // Normalization operators
-    RegisterOpBuilderImpl<BatchNormOpBuilder>("BatchNorm");
-    RegisterOpBuilderImpl<BatchNormOpBuilder>("BatchNormalization");
-    RegisterOpBuilderImpl<BatchNormOpBuilder>("LayerNorm");
+    // Register reshape operators
+    factory.RegisterBuilder("Reshape", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ReshapeOpBuilder>();
+    });
+    factory.RegisterBuilder("Flatten", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ReshapeOpBuilder>();
+    });
+    factory.RegisterBuilder("ExpandDims", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ReshapeOpBuilder>();
+    });
+    factory.RegisterBuilder("Squeeze", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ReshapeOpBuilder>();
+    });
 
-    // Reduce operators
-    RegisterOpBuilderImpl<ReduceOpBuilder>("ReduceSum");
-    RegisterOpBuilderImpl<ReduceOpBuilder>("ReduceMean");
-    RegisterOpBuilderImpl<ReduceOpBuilder>("ReduceMax");
-    RegisterOpBuilderImpl<ReduceOpBuilder>("ReduceMin");
+    // Register batchnorm operators
+    factory.RegisterBuilder("BatchNorm", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<BatchNormOpBuilder>();
+    });
+    factory.RegisterBuilder("BatchNormalization", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<BatchNormOpBuilder>();
+    });
+    factory.RegisterBuilder("InstanceNorm", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<BatchNormOpBuilder>();
+    });
+    factory.RegisterBuilder("LayerNorm", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<BatchNormOpBuilder>();
+    });
 
-    // Passthrough operators (N1)
-    RegisterOpBuilderImpl<CastOpBuilder>("Cast");
-    RegisterOpBuilderImpl<TransDataOpBuilder>("TransData");
+    // Register reduce operators
+    factory.RegisterBuilder("ReduceSum", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ReduceOpBuilder>();
+    });
+    factory.RegisterBuilder("ReduceMean", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ReduceOpBuilder>();
+    });
+    factory.RegisterBuilder("ReduceMax", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ReduceOpBuilder>();
+    });
+    factory.RegisterBuilder("ReduceMin", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ReduceOpBuilder>();
+    });
+    factory.RegisterBuilder("ReduceProd", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ReduceOpBuilder>();
+    });
+    factory.RegisterBuilder("ReduceAll", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ReduceOpBuilder>();
+    });
+    factory.RegisterBuilder("ReduceAny", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ReduceOpBuilder>();
+    });
 
-    // Multi-input operators (N3)
-    RegisterOpBuilderImpl<ConcatOpBuilder>("Concat");
-    RegisterOpBuilderImpl<ConcatOpBuilder>("ConcatV2");
-    RegisterOpBuilderImpl<ConcatOpBuilder>("ConcatD");
+    // Register passthrough operators
+    factory.RegisterBuilder("Cast", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<CastOpBuilder>();
+    });
+    factory.RegisterBuilder("TransData", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<TransDataOpBuilder>();
+    });
+
+    // Register concat operators
+    factory.RegisterBuilder("Concat", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ConcatOpBuilder>();
+    });
+    factory.RegisterBuilder("ConcatV2", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ConcatOpBuilder>();
+    });
+    factory.RegisterBuilder("ConcatD", []() -> std::unique_ptr<OpBuilder> {
+        return std::make_unique<ConcatOpBuilder>();
+    });
 }
 
 } // namespace tile_shape

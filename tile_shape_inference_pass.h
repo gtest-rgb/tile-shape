@@ -79,30 +79,34 @@ enum class TileShapeTransformType {
  *
  * Each operator type should have its own OpBuilder implementation that
  * handles TileShape initialization, validation, and inference logic.
+ * The node is stored internally when the OpBuilder is created.
  */
 class OpBuilder {
 public:
     virtual ~OpBuilder() = default;
 
     /**
+     * @brief Set the node for this OpBuilder
+     *
+     * @param node The node to operate on
+     */
+    virtual void SetNode(ge::NodePtr node) {
+        node_ = node;
+    }
+
+    /**
      * @brief Initialize and validate user-configured TileShape
      *
-     * @param node The node to initialize
-     * @param userTileShape User-provided TileShape configuration
-     * @param inputTileShape [out] Calculated input N-dim TileShape
-     * @param outputTileShape [out] Calculated output N-dim TileShape
+     * Gets TileShape from node attributes, validates it, and sets
+     * tile_shape_input_nd and tile_shape_output_nd attributes on the node.
+     *
      * @return npucl::SUCCESS or npucl::FAILED
      */
-    virtual int InitAndValidateTileShape(
-        ge::NodePtr node,
-        const AscppTileShape& userTileShape,
-        AscppTileShape& inputTileShape,
-        AscppTileShape& outputTileShape) = 0;
+    virtual int InitAndValidateTileShape() = 0;
 
     /**
      * @brief Infer TileShape from predecessor node (conservative strategy)
      *
-     * @param node The node to infer TileShape for
      * @param predecessorOutputShape Output TileShape from predecessor
      * @param tileShape [out] Inferred final TileShape
      * @param inputTileShape [out] Inferred input N-dim TileShape
@@ -110,7 +114,6 @@ public:
      * @return npucl::SUCCESS or npucl::FAILED
      */
     virtual int InferTileShape(
-        ge::NodePtr node,
         const AscppTileShape& predecessorOutputShape,
         AscppTileShape& tileShape,
         AscppTileShape& inputTileShape,
@@ -119,10 +122,9 @@ public:
     /**
      * @brief Validate operator-specific constraints
      *
-     * @param node The node to validate
      * @return npucl::SUCCESS or npucl::FAILED
      */
-    virtual int ValidateConstraints(ge::NodePtr node) = 0;
+    virtual int ValidateConstraints() = 0;
 
     /**
      * @brief Check if input TileShape can be transformed to target TileShape
@@ -144,42 +146,45 @@ public:
      *
      * For multi-input operators, derive a consistent unified TileShape.
      *
-     * @param node The node
      * @param inputShapes All input TileShapes
      * @param unifiedShape [out] Derived unified TileShape
      * @param errorMsg [out] Error message if inference fails
      * @return npucl::SUCCESS or npucl::FAILED
      */
     virtual int InferUnifiedTileShape(
-        ge::NodePtr node,
         const std::vector<AscppTileShape>& inputShapes,
         AscppTileShape& unifiedShape,
         std::string& errorMsg);
 
 protected:
+    ge::NodePtr node_;
+
+    /**
+     * @brief Get TileShape from node attributes
+     *
+     * @return TileShape vector, empty if not configured
+     */
+    virtual AscppTileShape GetTileShapeFromNode();
+
     /**
      * @brief Calculate input TileShape based on output TileShape
      *
-     * @param node The node
      * @param outputTileShape Output TileShape
      * @param inputTileShape [out] Calculated input TileShape
      * @return npucl::SUCCESS or npucl::FAILED
      */
     virtual int CalculateInputTileShape(
-        ge::NodePtr node,
         const AscppTileShape& outputTileShape,
         AscppTileShape& inputTileShape) = 0;
 
     /**
      * @brief Calculate output TileShape based on input TileShape
      *
-     * @param node The node
      * @param inputTileShape Input TileShape
      * @param outputTileShape [out] Calculated output TileShape
      * @return npucl::SUCCESS or npucl::FAILED
      */
     virtual int CalculateOutputTileShape(
-        ge::NodePtr node,
         const AscppTileShape& inputTileShape,
         AscppTileShape& outputTileShape) = 0;
 };
@@ -192,7 +197,8 @@ protected:
  * @brief Singleton factory for creating OpBuilder instances
  *
  * This factory creates appropriate OpBuilder instances based on
- * operator type and library name.
+ * operator type and library name. The node is set on the builder
+ * during creation.
  */
 class OpBuilderFactory {
 public:
@@ -204,9 +210,9 @@ public:
     /**
      * @brief Create an OpBuilder for the given node
      *
-     * @param node The node to create builder for
+     * @param node The node to create builder for (will be set on the builder)
      * @param libName Library name (e.g., "ascendcpp_lib")
-     * @return Pointer to OpBuilder, or nullptr on failure
+     * @return Pointer to OpBuilder with node set, or nullptr on failure
      */
     std::unique_ptr<OpBuilder> CreateOpBuilder(
         ge::NodePtr node,
@@ -319,42 +325,17 @@ private:
      * setting their TileShape to match their predecessors.
      *
      * @param graph The compute graph
-     * @param topoNodes Nodes in topological order
      * @return npucl::SUCCESS or npucl::FAILED
      */
-    int PreprocessPassthroughOps(
-        ge::ComputeGraphPtr graph,
-        const std::vector<ge::NodePtr>& topoNodes);
-
-    /**
-     * @brief Get nodes in topological order
-     *
-     * @param graph The compute graph
-     * @param topoNodes [out] Vector of nodes in topological order
-     * @return npucl::SUCCESS or npucl::FAILED
-     */
-    int GetTopologicalOrder(
-        ge::ComputeGraphPtr graph,
-        std::vector<ge::NodePtr>& topoNodes);
-
-    /**
-     * @brief Get TileShape from node attributes
-     *
-     * @param node The node
-     * @return TileShape vector, empty if not configured
-     */
-    AscppTileShape GetTileShapeFromNode(ge::NodePtr node);
+    int PreprocessPassthroughOps(ge::ComputeGraphPtr graph);
 
     /**
      * @brief Initialize and validate user-configured nodes
      *
      * @param graph The compute graph
-     * @param topoNodes Nodes in topological order
      * @return npucl::SUCCESS or npucl::FAILED
      */
-    int InitializeUserConfiguredNodes(
-        ge::ComputeGraphPtr graph,
-        const std::vector<ge::NodePtr>& topoNodes);
+    int InitializeUserConfiguredNodes(ge::ComputeGraphPtr graph);
 
     // ========== Step 2 Methods: Inference ==========
 
@@ -410,12 +391,9 @@ private:
      * @brief Run TileShape inference for all unconfigured nodes
      *
      * @param graph The compute graph
-     * @param topoNodes Nodes in topological order
      * @return npucl::SUCCESS or npucl::FAILED
      */
-    int RunInference(
-        ge::ComputeGraphPtr graph,
-        const std::vector<ge::NodePtr>& topoNodes);
+    int RunInference(ge::ComputeGraphPtr graph);
 
     // ========== Step 3 Methods: Validation ==========
 

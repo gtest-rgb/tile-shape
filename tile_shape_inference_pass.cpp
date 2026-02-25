@@ -73,33 +73,27 @@ fe::OptStatus TileShapeInferencePass::Run(ge::ComputeGraphPtr graph) {
 
     // ========== Step 1: 初始化与输入约束检查 ==========
 
-    // 1.1 检查所有输入节点是否配置 TileShape
+    // 1.1 初始化用户配置的节点（优先处理，标记 tile_shape_user_configured 属性）
+    ASCPP_CHK_TRUE_RETURN_FAIL(
+        InitializeUserConfiguredNodes(graph) == npucl::FAILED,
+        "Initialize user configured nodes failed");
+
+    // 1.2 检查所有输入节点是否配置 TileShape
     ASCPP_CHK_TRUE_RETURN_FAIL(
         CheckInputNodesConstraint(graph) == npucl::FAILED,
         "Input node constraint check failed");
 
-    // 1.2 获取拓扑顺序
-    std::vector<ge::NodePtr> topoNodes;
-    ASCPP_CHK_TRUE_RETURN_FAIL(
-        GetTopologicalOrder(graph, topoNodes) == npucl::FAILED,
-        "GetTopologicalOrder failed");
-
     // 1.3 预处理透传算子 (Cast, TransData)
     ASCPP_CHK_TRUE_RETURN_FAIL(
-        PreprocessPassthroughOps(graph, topoNodes) == npucl::FAILED,
+        PreprocessPassthroughOps(graph) == npucl::FAILED,
         "Preprocess passthrough ops failed");
-
-    // 1.4 初始化用户配置的节点
-    ASCPP_CHK_TRUE_RETURN_FAIL(
-        InitializeUserConfiguredNodes(graph, topoNodes) == npucl::FAILED,
-        "Initialize user configured nodes failed");
 
     DUMP_GRAPH(graph, "middle_tile_shape_inference_pass");
 
     // ========== Step 2: 推导 TileShape ==========
 
     ASCPP_CHK_TRUE_RETURN_FAIL(
-        RunInference(graph, topoNodes) == npucl::FAILED,
+        RunInference(graph) == npucl::FAILED,
         "TileShape inference failed");
 
     // ========== Step 3: 最终验证 ==========
@@ -138,29 +132,12 @@ int TileShapeInferencePass::CheckInputNodesConstraint(ge::ComputeGraphPtr graph)
     return npucl::SUCCESS;
 }
 
-int TileShapeInferencePass::GetTopologicalOrder(
-    ge::ComputeGraphPtr graph,
-    std::vector<ge::NodePtr>& topoNodes) {
-    // Implementation should return nodes in topological order
-    //
-    // Pseudocode:
-    // topoNodes = graph->GetTopologicalNodes();
-    // if (topoNodes.empty()) {
-    //     return npucl::FAILED;
-    // }
-
-    return npucl::SUCCESS;
-}
-
 // ============================================================================
 // Step 1.5: Preprocess Passthrough Operators
 // ============================================================================
 
-int TileShapeInferencePass::PreprocessPassthroughOps(
-    ge::ComputeGraphPtr graph,
-    const std::vector<ge::NodePtr>& topoNodes) {
-
-    for (auto node : topoNodes) {
+int TileShapeInferencePass::PreprocessPassthroughOps(ge::ComputeGraphPtr graph) {
+    for (auto node : graph->GetDirectNodes()) {
         if (!node || !node->GetOpDesc()) {
             continue;
         }
@@ -203,55 +180,18 @@ int TileShapeInferencePass::PreprocessPassthroughOps(
     return npucl::SUCCESS;
 }
 
-AscppTileShape TileShapeInferencePass::GetTileShapeFromNode(ge::NodePtr node) {
-    AscppTileShape tileShape;
+int TileShapeInferencePass::InitializeUserConfiguredNodes(ge::ComputeGraphPtr graph) {
+    for (auto node : graph->GetDirectNodes()) {
+        // Create OpBuilder 并设置 node
+        auto opBuilder = OpBuilderFactory::Instance().CreateOpBuilder(node, "ascendcpp_lib");
+        if (!opBuilder) {
+            continue;
+        }
 
-    if (!node || !node->GetOpDesc()) {
-        return tileShape;
-    }
-
-    // Implementation should retrieve tile_shape attribute from node
-    //
-    // Pseudocode:
-    // ge::AttrUtils::GetListInt(node->GetOpDesc(), "tile_shape", tileShape);
-
-    return tileShape;
-}
-
-int TileShapeInferencePass::InitializeUserConfiguredNodes(
-    ge::ComputeGraphPtr graph,
-    const std::vector<ge::NodePtr>& topoNodes) {
-
-    for (auto node : topoNodes) {
-        AscppTileShape currentTileShape = GetTileShapeFromNode(node);
-
-        if (!currentTileShape.empty()) {
-            // 标记为用户配置
-            // ge::AttrUtils::SetBool(node->GetOpDesc(), "tile_shape_user_configured", true);
-
-            // 调用 OpBuilder 初始化并校验
-            auto opBuilder = OpBuilderFactory::Instance().CreateOpBuilder(node, "ascendcpp_lib");
-            ASCPP_CHK_NULL_RETURN_FAIL(
-                opBuilder,
-                "Can not create opbuilder for op[%s]",
-                node->GetOpDesc()->GetName().c_str());
-
-            AscppTileShape inputTileShape;
-            AscppTileShape outputTileShape;
-
-            ASCPP_CHK_TRUE_RETURN_FAIL(
-                opBuilder->InitAndValidateTileShape(
-                    node, currentTileShape, inputTileShape, outputTileShape) == npucl::FAILED,
-                "InitAndValidateTileShape failed for op[%s]",
-                node->GetOpDesc()->GetName().c_str());
-
-            // 存储计算结果到节点属性
-            // ge::AttrUtils::SetListInt(node->GetOpDesc(), "tile_shape_input_nd", inputTileShape);
-            // ge::AttrUtils::SetListInt(node->GetOpDesc(), "tile_shape_output_nd", outputTileShape);
-        } else {
-            // 未配置：设置默认值
-            // ge::AttrUtils::SetListInt(node->GetOpDesc(), "tile_shape_input_nd", {-1, -1, ...});
-            // ge::AttrUtils::SetListInt(node->GetOpDesc(), "tile_shape_output_nd", {-1, -1, ...});
+        // 调用无参数的初始化校验方法
+        if (opBuilder->InitAndValidateTileShape() != npucl::SUCCESS) {
+            // Error E002: TileShape validation failed
+            return npucl::FAILED;
         }
     }
 
@@ -262,11 +202,8 @@ int TileShapeInferencePass::InitializeUserConfiguredNodes(
 // Step 2: Inference Methods
 // ============================================================================
 
-int TileShapeInferencePass::RunInference(
-    ge::ComputeGraphPtr graph,
-    const std::vector<ge::NodePtr>& topoNodes) {
-
-    for (auto node : topoNodes) {
+int TileShapeInferencePass::RunInference(ge::ComputeGraphPtr graph) {
+    for (auto node : graph->GetDirectNodes()) {
         std::string nodeName = node->GetOpDesc()->GetName();
         std::string nodeType = node->GetOpDesc()->GetType();
 
@@ -280,7 +217,14 @@ int TileShapeInferencePass::RunInference(
             continue;
         }
 
-        AscppTileShape currentTileShape = GetTileShapeFromNode(node);
+        // 创建 OpBuilder 并设置 node
+        auto opBuilder = OpBuilderFactory::Instance().CreateOpBuilder(node, "ascendcpp_lib");
+        if (!opBuilder) {
+            continue;
+        }
+
+        // 从 OpBuilder 获取 TileShape
+        AscppTileShape currentTileShape = opBuilder->GetTileShapeFromNode();
 
         // 跳过已配置节点（保护用户配置）
         bool isUserConfigured = false;
@@ -367,7 +311,7 @@ int TileShapeInferencePass::ConservativeTileShapeInference(
         AscppTileShape tileShape;
         ASCPP_CHK_TRUE_RETURN_FAIL(
             opBuilder->InferTileShape(
-                node, predecessorOutputShape, tileShape, inputTileShape, outputTileShape) == npucl::FAILED,
+                predecessorOutputShape, tileShape, inputTileShape, outputTileShape) == npucl::FAILED,
             "InferTileShape failed for op[%s]",
             node->GetOpDesc()->GetName().c_str());
         return npucl::SUCCESS;
@@ -387,7 +331,7 @@ int TileShapeInferencePass::ConservativeTileShapeInference(
         AscppTileShape tileShape;
         ASCPP_CHK_TRUE_RETURN_FAIL(
             opBuilder->InferTileShape(
-                node, allPredecessorShapes[0], tileShape, inputTileShape, outputTileShape) == npucl::FAILED,
+                allPredecessorShapes[0], tileShape, inputTileShape, outputTileShape) == npucl::FAILED,
             "InferTileShape failed for op[%s]",
             node->GetOpDesc()->GetName().c_str());
         return npucl::SUCCESS;
@@ -397,8 +341,7 @@ int TileShapeInferencePass::ConservativeTileShapeInference(
     AscppTileShape unifiedShape;
     std::string errorMsg;
 
-    ret = opBuilder->InferUnifiedTileShape(
-        node, allPredecessorShapes, unifiedShape, errorMsg);
+    ret = opBuilder->InferUnifiedTileShape(allPredecessorShapes, unifiedShape, errorMsg);
 
     if (ret != npucl::SUCCESS) {
         // Error E007: 多输入不匹配，无法推导
@@ -409,7 +352,7 @@ int TileShapeInferencePass::ConservativeTileShapeInference(
     AscppTileShape tileShape;
     ASCPP_CHK_TRUE_RETURN_FAIL(
         opBuilder->InferTileShape(
-            node, unifiedShape, tileShape, inputTileShape, outputTileShape) == npucl::FAILED,
+            unifiedShape, tileShape, inputTileShape, outputTileShape) == npucl::FAILED,
         "InferTileShape failed for op[%s]",
         node->GetOpDesc()->GetName().c_str());
 
